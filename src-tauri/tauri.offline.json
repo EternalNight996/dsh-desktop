@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "windows": {
+      "webviewInstallMode": {
+        "type": "offlineInstaller"
+      }
+    },
+    "resources": {
+      "../vendor/node-runtime/node_modules/npm/": "node-runtime/node_modules/npm/",
+      "../vendor/dsh-runtime/node_modules/": "dsh-runtime/node_modules/"
+    }
+  }
+}

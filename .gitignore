@@ -1,0 +1,37 @@
+# Rust / Cargo 构建产物
+/target
+**/target
+
+# Tauri 生成的 schema
+/src-tauri/gen/
+
+# 运行时打包产物（由 `just vendor` 生成，不入库）
+/vendor/dsh-runtime/
+/vendor/node-runtime/
+/vendor/webview2/
+/src-tauri/binaries/
+
+# Node（防御性）
+node_modules/
+
+# 系统 / 编辑器
+.DS_Store
+Thumbs.db
+*.log
+.idea/
+.vscode/
+
+# ZCode 会话内部状态
+.zcode/
+
+# 自动更新签名密钥（私钥不入库；公钥 .pub 已写入 tauri.conf.json）
+/.tauri/
+
+# 独立克隆的仓库（hyperframes/video-use 等），不作为本仓库子模块
+assets/repos/
+
+# 视频 / HyperFrames 工作产物，不入库
+videos/
+
+# 会话期间 npm 临时缓存
+.npm-cache/

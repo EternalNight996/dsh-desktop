@@ -1,0 +1,194 @@
+name: release
+
+# 触发：推送 v* tag，或手动指定 tag（默认 v0.2.0，用于补发已存在的 tag）
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag（例如 v0.2.0）'
+        required: false
+        default: 'v0.2.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+            artifact: ddh-windows
+          - os: macos-14            # Apple Silicon（原生；app+updater 产出被签名的 .app.tar.gz，dmg 供手动安装）
+            target: aarch64-apple-darwin
+            bundles: app,updater,dmg
+            artifact: ddh-macos-arm64
+          - os: macos-14            # 在 arm64 runner 上交叉编译 x64，绕开 Intel runner 排队
+            target: x86_64-apple-darwin
+            bundles: app,updater,dmg
+            artifact: ddh-macos-x64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: deb
+            artifact: ddh-linux-deb
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bundles: appimage
+            artifact: ddh-linux-appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 安装 Linux 系统依赖（Ubuntu）
+        if: runner.os == 'Linux'
+        run: |
+          bash scripts/setup-linux.sh
+          sudo apt-get install -y patchelf
+
+      - name: 准备运行时（node sidecar + npm + dsh，架构跟随 runner）
+        run: node scripts/vendor.mjs
+
+      - name: 为 x64 目标准备 x64 node sidecar（arm64 runner 交叉编译用）
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: |
+          set -euo pipefail
+          NV=$(node --version | sed 's/v//')
+          curl -fsSL "https://nodejs.org/dist/v${NV}/node-v${NV}-darwin-x64.tar.gz" -o /tmp/node-x64.tar.gz
+          tar -xzf /tmp/node-x64.tar.gz -C /tmp
+          cp "/tmp/node-v${NV}-darwin-x64/bin/node" src-tauri/binaries/node-x86_64-apple-darwin
+          chmod +x src-tauri/binaries/node-x86_64-apple-darwin
+          ls -la src-tauri/binaries/
+
+      - name: 缓存 cargo（仅应用构建产物与下载包；不缓存 bin/index，避免跨版本冲突）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/cache/
+            src-tauri/target
+          key: ${{ runner.os }}-${{ matrix.target }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-
+
+      - name: 安装 tauri-cli
+        run: cargo install tauri-cli --locked --force
+
+      - name: 带签名构建（NSIS/dmg/deb/AppImage）
+        working-directory: src-tauri
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: cargo tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --ci
+
+      - name: macOS 更新包重命名（加架构后缀，避免 arm64/x64 同名冲突）
+        if: contains(matrix.target, 'apple-darwin')
+        run: |
+          set -euo pipefail
+          cd "src-tauri/target/${{ matrix.target }}/release/bundle/macos"
+          if [ "${{ matrix.target }}" = "aarch64-apple-darwin" ]; then SUF=aarch64; else SUF=x64; fi
+          if [ -f "dsh-desktop.app.tar.gz.sig" ]; then mv "dsh-desktop.app.tar.gz.sig" "dsh-desktop_${SUF}.app.tar.gz.sig"; fi
+          if [ -f "dsh-desktop.app.tar.gz" ]; then mv "dsh-desktop.app.tar.gz" "dsh-desktop_${SUF}.app.tar.gz"; fi
+          ls -la
+
+      - name: 上传构建产物（工作流 artifact）
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.AppImage
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.rpm
+            src-tauri/target/${{ matrix.target }}/release/bundle/**/*.sig
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 汇总全部平台产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 生成 latest.json（合并全部平台，URL 指向本 Release）
+        run: |
+          echo "=== artifacts 目录结构（诊断） ==="
+          find artifacts -maxdepth 10 -type f 2>/dev/null | head -60 || true
+          find artifacts -type d -name bundle 2>/dev/null || echo "!! 未找到 bundle 目录"
+          node scripts/publish-update.mjs --manifest-only --artifacts-dir artifacts --repo ${{ github.repository }} --tag ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: 发布 GitHub Release（建 release + 上传安装包/.sig/latest.json）
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          FILES=$(find artifacts -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.rpm' -o -name '*.sig' \))
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes "auto update release" || true
+          gh release upload "$TAG" $FILES artifacts/latest.json --repo "$GITHUB_REPOSITORY" --clobber
+
+  gitee:
+    # 同步 master/gitee 分支与 tag 到 Gitee，并把同一批安装包发布到 Gitee 发行版
+    # （国内用户自动更新走 Gitee 端点：https://gitee.com/.../raw/gitee/latest.json）
+    needs: [build, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: 下载全部平台产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 同步 master/gitee 分支与 tag 到 Gitee
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config --global user.email "ci@users.noreply.github.com"
+          git config --global user.name "CI"
+          # tag 触发的 checkout 是 detached HEAD，先切回 master 分支（fetch-depth:0 已拉全部分支）
+          git checkout master
+          PUSH_URL="https://eternalnight996:${GITEE_TOKEN}@gitee.com/eternalnight996/dsh-desktop.git"
+          git push "${PUSH_URL}" master:master "${TAG}:${TAG}"
+          # gitee 分支是 master 镜像 + 发布生成的 latest.json（发布脚本随后重写），允许 force
+          git push "${PUSH_URL}" --force master:gitee
+
+      - name: 发布到 Gitee 发行版（上传安装包/.sig/latest.json + 写 raw 端点文件）
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: node scripts/publish-gitee.mjs --tag "$TAG" --artifacts-dir artifacts --repo eternalnight996/dsh-desktop
