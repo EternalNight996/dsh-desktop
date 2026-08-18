@@ -6,7 +6,7 @@
     <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg" />
     <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2.x-orange.svg" />
     <img alt="Platform" src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" />
-    <img alt="dsh" src="https://img.shields.io/badge/dsh-0.1.0--rc.6-5b8def.svg" />
+    <img alt="dsh" src="https://img.shields.io/badge/dsh-跟随官方最新-5b8def.svg" />
   </p>
   <p>
     <a href="https://gitee.com/eternalnight996/dsh-desktop/releases">📦 立刻下载</a> |
@@ -36,11 +36,11 @@
 
 ### 🔄 自动更新，永远最新
 
-桌面壳自己会**自动检查新版本**：发现更新 → 一键下载安装 → 自动重启，全程你不用动手；dsh 引擎跟随官方最新版，**永远不过时**。更新源双端互备（国内自动走 Gitee，失败回退 GitHub），就算某一天某一边抽风，另一边照样能更。
+桌面壳自己会**每次启动自动检查新版本**：发现更新 → 自动打开设置窗口弹出「是否立即更新」（可勾选「下次不提醒此版本」）→ 一键下载安装 → 自动重启。更新入口常驻**系统托盘**（右键：打开主窗口 / 设置 / 检查更新 / 退出），设置窗口里也能手动检查。在线版 dsh 启动直接用本地缓存，**后台检查官方新版本**，在设置窗口**一键升级**；更新源双端互备（国内自动走 Gitee，失败回退 GitHub），就算某一天某一边抽风，另一边照样能更。
 
 ### 🧑‍💼 像素人办公室：你的专家天团已入职
 
-> 可选插件：`npx @deepseek-ai/dsh plugin --profile web add dsh-ui-agents-pixe` 一键安装（独立 npm 包，桌面壳默认不内置）。
+> 可选插件：先装 [dsh-market 插件市场](https://github.com/dsh-market/dsh-market)（`dsh plugin add dshmarket`，界面浏览/一键安装）或直接 `npx @deepseek-ai/dsh plugin --profile web add dsh-ui-agents-pixe`（独立 npm 包，桌面壳默认不内置）。
 
 把 **255+ 位专家**（17 个部门）变成**会动的像素小人**：
 
@@ -103,7 +103,7 @@ A：它是 DeepSeek Harness 的「桌面皮肤 + 保姆」：负责帮你拉起�
 A：角色、状态全在**本机**（`~/.dsh/`），纯本地、零外传、零 LLM 开销。
 
 **Q：官方更新了怎么办？**
-A：维护者一条命令 `just update` 跟随官方最新版，桌面壳还能自动更新——你不用管，永远最新。
+A：在线版桌面壳启动时**直接用本地缓存的 dsh**（首次联网自动安装；后台只检查版本，发现新版提示你点击「更新 dsh」一键升级），桌面壳自身也自动更新——你不用管，永远最新；离线版由维护者 `just update` 重新打包。
 
 **Q：像素人会偷懒吗？**
 A：会摸鱼（下班躺床），但该干活时打字飞快 —— 这才是真实的打工人。
@@ -156,7 +156,7 @@ A：会摸鱼（下班躺床），但该干活时打字飞快 —— 这才是�
 | 在线安装 | `downloadBootstrapper` | `just dist-online` / `just release-online` | 安装时联网下载 WebView2 |
 | 离线安装 | `offlineInstaller` | `just dist-offline` / `just release-*-offline` | 内置 WebView2 + dsh，完全离线 |
 
-> **离线**模式还会内置 dsh（`@deepseek-ai/dsh`）；默认与在线模式在运行时用 npx 拉取 dsh。
+> **离线**模式还会内置 dsh（`@deepseek-ai/dsh`）；**在线**模式首次联网自动安装 dsh 到本地缓存，之后直接用内置 node 启动（无需 npx）；后台只检查版本，发现新版由你点「更新 dsh」手动升级。
 
 #### 离线打包教程（客户零依赖，4 步）
 
@@ -195,7 +195,7 @@ A：会摸鱼（下班躺床），但该干活时打字飞快 —— 这才是�
 |---|---|---|---|
 | 装 Node | 要 | 免 | **免** |
 | 自动启动 dsh | ❌ 手动 | ✅ | ✅ |
-| dsh 引擎更新 | 手动 npm | 手动 | **✅ `just update` 一键** |
+| dsh 引擎更新 | 手动 npm | 手动 | **✅ 在线后台检查 + 手动一键；离线 `just update` 一键** |
 | 桌面壳自动更新 | ❌ | 手动 | **✅ 启动自检 + 一键更新** |
 | 内置插件（开箱彩蛋） | ❌ 需自装 | ❌ 需自装 | ❌ 需自装（独立插件一键加装） |
 | 像素人角色管理 | ❌ | ❌ | ❌ 需自装（255+ 角色 / 29 团队） |
@@ -207,7 +207,7 @@ A：会摸鱼（下班躺床），但该干活时打字飞快 —— 这才是�
 
 - 决策记录见 [ADR-001](docs/rules/05-adr/001-load-remote-webui.md)（加载远端 dsh Web UI，因 dsh 前端依赖服务端注入 `__DSH_BOOT__`，非静态站点）
 - 目录：`src-tauri/`（Rust + sidecar + 配置）、`src/`（加载页）、`vendor/`（运行时产物，`just vendor` 生成，不入库）、`scripts/`
-- 可选插件：`dsh-ui-agents-pixe`（像素办公室，独立 npm 包 / 独立仓库维护，桌面壳**不内置**）——按需 `dsh plugin add dsh-ui-agents-pixe` 安装，不改 dsh 源码
+- 可选插件：`dshmarket`（插件市场，界面浏览/一键安装）与 `dsh-ui-agents-pixe`（像素办公室，独立 npm 包 / 独立仓库维护，桌面壳**不内置**）——按需 `dsh plugin add` 安装，不改 dsh 源码
 - 提交规范：feat/fix/chore/docs/refactor/test；semver 打 tag；GUI 文档配真实截图
 
 </details>
@@ -258,7 +258,8 @@ just vendor
 ### ⑤ 开发运行 / 构建
 
 ```sh
-just dev          # 开发运行：自动拉起 dsh 并弹出窗口
+just dev          # 开发运行：自动拉起 dsh 并弹出窗口（带 Rust 热重载）
+just run          # 一键本地启动调试：增量构建后直接运行 debug 版 exe（比 dev 更快）
 just dist         # 构建（debug，不打包安装器）
 just release-win  # Windows 正式安装包（其他平台见上方「跨平台构建」表）
 ```
@@ -361,15 +362,25 @@ node scripts/publish-update.mjs --notes "更新说明"
 
 ---
 
-## 🎨 扩展：像素办公室插件
+## 🎨 扩展：插件市场 + 像素办公室
 
-桌面壳**不内置**像素办公室插件；如需使用，运行以下命令即可一键安装：
+桌面壳**不内置**任何插件；推荐先装 **dsh-market 插件市场**，之后所有插件都能在界面里浏览、搜索、一键安装：
+
+```sh
+dsh plugin add dshmarket
+```
+
+安装后重启桌面壳，设置页会出现「插件市场」入口（[dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)）。
+
+### 🧑‍💼 像素办公室插件
+
+也可直接装像素办公室插件（255+ 专家角色，The Agency en + agency-agents-zh，29 个预设团队）：
 
 ```sh
 dsh plugin add dsh-ui-agents-pixe
 ```
 
-安装后重启桌面壳，像素办公室（255+ 专家角色）自动出现。
+安装后重启桌面壳，像素办公室自动出现。
 
 | 仓库 | 地址 |
 |---|---|
