@@ -1,0 +1,50 @@
+# 桌面壳自定义 command 的应用级 ACL 权限。
+# 供 dsh Web UI（remote 页面）与设置窗口（local）经 capability 引用，从而允许调用这些 command。
+# 注意：identifier 属于应用命名空间（无需 prefix）；capability 里写 identifier 即可。
+
+[[permission]]
+identifier = "allow-open-settings"
+description = "Allows opening the desktop-shell settings window."
+commands.allow = ["open_settings"]
+
+[[permission]]
+identifier = "allow-log-workbar-inject"
+description = "Allows the workbar inject script to report diagnostics to the shell log."
+commands.allow = ["log_workbar_inject"]
+
+# ===== 设置窗口需要的 command 权限 =====
+
+[[permission]]
+identifier = "allow-check-app-update"
+description = "Allows checking desktop-shell update."
+commands.allow = ["check_app_update"]
+
+[[permission]]
+identifier = "allow-install-app-update"
+description = "Allows installing desktop-shell update."
+commands.allow = ["install_app_update"]
+
+[[permission]]
+identifier = "allow-check-dsh-update"
+description = "Allows checking the dsh engine update."
+commands.allow = ["check_dsh_update"]
+
+[[permission]]
+identifier = "allow-update-online-dsh"
+description = "Allows updating the online dsh engine."
+commands.allow = ["update_online_dsh"]
+
+[[permission]]
+identifier = "allow-get-dsh-version"
+description = "Allows reading the current dsh version."
+commands.allow = ["get_dsh_version"]
+
+[[permission]]
+identifier = "allow-update-prompt-pref"
+description = "Allows getting/setting the update prompt preference."
+commands.allow = ["get_update_prompt_pref", "set_update_prompt_pref"]
+
+[[permission]]
+identifier = "allow-auto-check-pref"
+description = "Allows getting/setting the auto-check update switch."
+commands.allow = ["get_auto_check", "set_auto_check"]

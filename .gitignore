@@ -35,3 +35,7 @@ videos/
 
 # 会话期间 npm 临时缓存
 .npm-cache/
+
+# 视觉工具产物
+.dsh-vision-router/
+.reasonix/*

@@ -1,7 +1,21 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the main window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Default capability for the main window and settings window; also allows the local dsh Web UI origin to invoke IPC (workbar update-check button).",
+  "windows": ["main", "settings"],
+  "permissions": [
+    "core:default",
+    "allow-open-settings",
+    "allow-log-workbar-inject",
+    "allow-check-app-update",
+    "allow-install-app-update",
+    "allow-check-dsh-update",
+    "allow-update-online-dsh",
+    "allow-get-dsh-version",
+    "allow-update-prompt-pref",
+    "allow-auto-check-pref"
+  ],
+  "remote": {
+    "urls": ["http://127.0.0.1:5399/*", "http://localhost:*/"]
+  }
 }

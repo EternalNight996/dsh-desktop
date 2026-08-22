@@ -5,7 +5,7 @@
 //   3. dsh 运行时：npm install @deepseek-ai/dsh@<version> 到 vendor/dsh-runtime
 // 说明：WebView2 属 Tauri bundler 管理的系统依赖（offlineInstaller 模式构建时自动内置），
 //       不走 vendor。跨平台：Windows/macOS/Linux 在各自平台上运行本脚本。
-// 用法：node scripts/vendor.mjs [dsh版本]  （缺省 0.1.0-rc.6）
+// 用法：node scripts/vendor.mjs [dsh版本]  （缺省 latest，自动查 npm 官方最新版）
 import { execSync } from 'node:child_process';
 import { existsSync, mkdirSync, cpSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -15,11 +15,14 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
 const update = args.includes('--update');
 const useLatest = args.includes('--latest');
-let dshVersion = args.find((a) => !a.startsWith('--')) || '0.1.0-rc.6';
-if (useLatest) {
+let dshVersion = args.find((a) => !a.startsWith('--')) || 'latest';
+const dshRegistry = process.env.DSH_REGISTRY || 'https://registry.npmjs.org';
+if (useLatest || dshVersion === 'latest') {
   try {
-    dshVersion = execSync('npm view @deepseek-ai/dsh version', { encoding: 'utf8' }).trim();
-    console.log(`最新 dsh 版本: ${dshVersion}`);
+    const out = execSync(`npm view @deepseek-ai/dsh versions --json --registry=${dshRegistry}`, { encoding: 'utf8' }).trim();
+    const allVersions = JSON.parse(out);
+    dshVersion = allVersions[allVersions.length - 1];
+    console.log(`最新 dsh 版本: ${dshVersion}（registry: ${dshRegistry}）`);
   } catch {
     console.error(`查询最新 dsh 版本失败，回退到默认 ${dshVersion}`);
   }
@@ -104,7 +107,7 @@ if (update) {
 if (!existsSync(join(dshDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))) {
   console.log(`install dsh@${dshVersion} -> ${dshDir}`);
   mkdirSync(dshDir, { recursive: true });
-  execSync(`npm install --prefix "${dshDir}" --omit=dev @deepseek-ai/dsh@${dshVersion}`, { stdio: 'inherit', cwd: root });
+  execSync(`npm install --prefix "${dshDir}" --omit=dev --registry=${dshRegistry} @deepseek-ai/dsh@${dshVersion}`, { stdio: 'inherit', cwd: root });
 } else {
   console.log(`dsh 已就绪: ${join(dshDir, 'node_modules', '@deepseek-ai', 'dsh')}`);
 }

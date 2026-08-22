@@ -11,9 +11,14 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
 app := "dsh-desktop"
-dsh_version := "0.1.0-rc.6"
 online_cfg := "src-tauri/tauri.online.json"
 offline_cfg := "src-tauri/tauri.offline.json"
+
+# 自动加载更新签名私钥：
+#   直接读取 .tauri/updater.key（由 `just keygen` 生成）的绝对路径并注入
+#   TAURI_SIGNING_PRIVATE_KEY，所有 release-* 打包都会自动带签名，无需手动设环境变量。
+tauri_key := justfile_directory() + "/.tauri/updater.key"
+export TAURI_SIGNING_PRIVATE_KEY := tauri_key
 
 # 默认（直接 `just` 不带参数）：显示帮助
 default:
@@ -22,11 +27,11 @@ default:
 # 安装 Rust 原生 Tauri CLI + 全局化 dsh CLI（跨平台，一次性；dsh 装到用户级 npm 前缀，新开终端即可用）
 setup:
     cargo install tauri-cli --locked
-    node scripts/globalize-dsh.mjs {{dsh_version}}
+    node scripts/globalize-dsh.mjs
 
 # 仅全局化 dsh CLI（终端直接可用 dsh 命令；Windows→%APPDATA%\npm，macOS/Linux→~/.npm-global）
 setup-dsh:
-    node scripts/globalize-dsh.mjs {{dsh_version}}
+    node scripts/globalize-dsh.mjs
 
 # 安装 Ubuntu/Debian 系统依赖（仅 Linux；Windows/macOS 跳过）
 setup-linux:
@@ -34,10 +39,15 @@ setup-linux:
 
 # 准备运行时：node/npm sidecar +（离线需）dsh
 vendor:
-    node scripts/vendor.mjs {{dsh_version}}
+    node scripts/vendor.mjs
 
-# 检查并拉取最新 deepseek-harness (dsh)（不改源码，自动查 npm 最新版；离线方案随后重打 release-*-offline）
+# 更新全局 dsh（默认）：自动查 npm 官方最新版并一键升级终端 dsh 命令 + 桌面壳在线 dsh
+#（两者同源：Windows→%APPDATA%\npm / macOS-Linux→~/.npm-global，改源码；用后需重开终端，重启桌面壳生效）
 update:
+    node scripts/globalize-dsh.mjs
+
+# 更新离线内置 dsh（仅离线打包方案用）：拉取最新版到 vendor/dsh-runtime，随后重打 release-*-offline
+update-offline:
     node scripts/vendor.mjs --update --latest
 
 # 生成图标集
@@ -45,10 +55,11 @@ icon:
     cargo tauri icon assets/logo.png
 
 # 生成自动更新签名密钥（一次性；私钥存 .tauri/updater.key，已 gitignore，公钥已写入 tauri.conf.json）
+# 生成后 justfile 会自动加载该私钥，后续直接 `just release-*` 即可。
 keygen:
     cargo tauri signer generate -w .tauri/updater.key --force --ci
 
-# 发布带签名的更新到 GitHub Releases（需 gh 或 GITHUB_TOKEN；先构建：TAURI_SIGNING_PRIVATE_KEY* 见 README）
+# 发布带签名的更新到 GitHub Releases（需 gh 或 GITHUB_TOKEN；先构建：`just release-win-signed`）
 publish:
     node scripts/publish-update.mjs
 
@@ -66,6 +77,13 @@ release-win-signed:
 dev:
     cargo tauri dev
 
+# 一键本地启动调试：增量构建并直接运行 debug 版桌面壳（比 dev 更快，无 Rust 热重载）
+# 先同步本地开发的 dsh-beast-master 到 profile 副本，避免 dsh 跑旧代码导致界面进不去。
+run:
+    @powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path 'F:\MyApp\eternal\dsh-beast-master\scripts\sync-profile.mjs') { cd 'F:\MyApp\eternal\dsh-beast-master'; node scripts/sync-profile.mjs }"
+    cargo build --manifest-path src-tauri/Cargo.toml
+    @{{ if os() == "windows" { "src-tauri/target/debug/dsh-desktop.exe" } else { "src-tauri/target/debug/dsh-desktop" } }}
+
 # ===== debug 构建（当前平台）=====
 
 # 默认：用系统自带 WebView2
@@ -82,8 +100,10 @@ dist-offline:
 
 # ===== release 打包（按平台，默认「用系统自带」）=====
 
-release-win:             # Windows x64
-    cargo tauri build --target x86_64-pc-windows-msvc
+# 以下 release-* 都会自动读取 .tauri/updater.key 进行签名，无需手动设置环境变量。
+
+release-win:             # Windows x64（NSIS；如需 MSI 可去掉 --bundles nsis）
+    cargo tauri build --target x86_64-pc-windows-msvc --bundles nsis
 
 release-mac:             # macOS Apple Silicon
     cargo tauri build --target aarch64-apple-darwin
@@ -97,6 +117,10 @@ release-mac-universal:   # macOS 通用
 release-linux:           # Linux x64
     cargo tauri build --target x86_64-unknown-linux-gnu
 
+# 当前平台 release 打包（Windows x64 / macOS Apple Silicon / Linux x64）
+release:
+    @just {{ if os() == "windows" { "release-win" } else if os() == "macos" { "release-mac" } else { "release-linux" } }}
+
 # ===== 在线打包（安装时下载 WebView2）=====
 
 release-online:          # 当前平台在线安装
@@ -104,11 +128,15 @@ release-online:          # 当前平台在线安装
 
 # ===== 离线打包（内置 WebView2 离线安装器 + dsh，客户零依赖）=====
 
-release-win-offline:     # Windows x64
-    cargo tauri build --config {{offline_cfg}} --target x86_64-pc-windows-msvc
+release-win-offline:     # Windows x64（NSIS；如需 MSI 可去掉 --bundles nsis）
+    cargo tauri build --config {{offline_cfg}} --target x86_64-pc-windows-msvc --bundles nsis
 
 release-mac-offline:     # macOS Apple Silicon
     cargo tauri build --config {{offline_cfg}} --target aarch64-apple-darwin
 
 release-linux-offline:   # Linux x64
     cargo tauri build --config {{offline_cfg}} --target x86_64-unknown-linux-gnu
+
+# 当前平台离线 release 打包（Windows x64 / macOS Apple Silicon / Linux x64）
+release-offline:
+    @just {{ if os() == "windows" { "release-win-offline" } else if os() == "macos" { "release-mac-offline" } else { "release-linux-offline" } }}

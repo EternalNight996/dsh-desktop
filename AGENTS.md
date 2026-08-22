@@ -4,14 +4,14 @@
 
 ## 一句话定位
 
-用 Rust + Tauri 2 给 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`，DeepSeek 开源 agent harness）的 Web UI 套一个**自包含桌面壳**：内置 node sidecar 自动拉起 dsh、窗口加载其 Web UI。不修改 deepseek-harness 任何代码。两套打包方案（justfile 可切换）：③ 离线内置 dsh（客户零依赖）/ ② 运行时 npx 拉取（轻量、好跟官方更新）。
+用 Rust + Tauri 2 给 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（`dsh`，DeepSeek 开源 agent harness）的 Web UI 套一个**自包含桌面壳**：内置 node sidecar 自动拉起 dsh、窗口加载其 Web UI。不修改 deepseek-harness 任何代码。两套打包方案（justfile 可切换）：③ 离线内置 dsh（客户零依赖）/ ② 在线方案：首次联网安装 dsh 到本地缓存后用内置 node 直跑（后台检查版本、手动一键升级，轻量、跟上官方）。
 
 ## 技术栈
 
 - 桌面壳：**Rust + Tauri 2**（webview：Windows 用 WebView2，macOS 用 WKWebView，Linux 用 WebKitGTK）
 - 目标平台：**Windows / macOS / Linux**
 - 被包装对象：`dsh` Web UI（DeepSeek Harness，Node.js 应用）
-- 进程编排：`tauri-plugin-shell` sidecar 拉起 dsh；dsh 两种来源（内置 resources / npx 拉取）
+- 进程编排：`tauri-plugin-shell` sidecar 拉起 dsh；dsh 两种来源（内置 resources / 在线首次安装到本地缓存、后台检查版本手动升级）
 - 构建链路：**cargo + cargo-tauri 驱动**；`just vendor` 用 Node 准备运行时（node/npm/dsh）
 
 ## 目录约定
@@ -28,7 +28,8 @@
 - 安装 CLI：`just setup`（= `cargo install tauri-cli --locked` + 全局化 dsh CLI，装到用户级 npm 前缀，新开终端即可用 `dsh`；只装 dsh 可单独跑 `just setup-dsh`）
 - Linux 系统依赖：`just setup-linux`（仅 Ubuntu/Debian）
 - 准备运行时：`just vendor`（node/npm sidecar + 内置 dsh）
-- 一键更新 dsh：`just update`（自动查 npm 官方最新版，不改源码）
+- 一键更新全局 dsh（在线方案 + 终端 CLI 同源）：`just update`（自动查 npm 官方最新版升级 `%APPDATA%\npm`，不改源码）
+- 更新离线内置 dsh（仅离线打包用）：`just update-offline`（拉最新版到 `vendor/dsh-runtime`，随后重打 `release-*-offline`）
 - 生成更新签名密钥：`just keygen`（一次性；私钥 `.tauri/updater.key` 已 gitignore，公钥已写入 tauri.conf.json）
 - 跨平台自动发布：GitHub Actions `.github/workflows/release.yml`（推 v* tag 自动三平台构建签名，发布 GitHub + Gitee 双发行版；需仓库 secret `TAURI_SIGNING_PRIVATE_KEY` + `GITEE_TOKEN`）
 - Windows 一键发布：`just release-publish "更新说明"`（`scripts/release-publish.ps1`：带签名 NSIS 构建 → 生成 latest.json → GitHub Releases → 打 tag 推送；需 gh 或 GITHUB_TOKEN）
@@ -38,6 +39,7 @@
 - 拉取构建（默认）：`just dist` / `just release-*`
 - 离线构建：`just dist-offline` / `just release-*-offline`
 - 开发运行：`just dev`
+- 一键本地启动调试：`just run`（增量构建后直接运行 debug 版 exe，比 `just dev` 更快、无 Rust 热重载）
 
 ## 提交规范
 

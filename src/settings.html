@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>设置 · DeepSeek Harness</title>
+    <style>
+      :root {
+        --accent: #0ea5e9;
+        --accent2: #6366f1;
+        --text: #e2e8f0;
+        --muted: #94a3b8;
+        --panel: rgba(15, 23, 42, 0.92);
+        --border: rgba(148, 163, 184, 0.18);
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        /* 渐变（background-image）之上再设明确不透明 background-color，防止 WebView2 下渐变未即时绘制时透明白屏 */
+        background:
+          radial-gradient(900px 500px at 50% -10%, #1e293b 0%, transparent 60%),
+          linear-gradient(180deg, #0f172a 0%, #020617 100%);
+        background-color: #0f172a;
+        font-family: system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        color: var(--text);
+        -webkit-user-select: none;
+        user-select: none;
+        overflow: hidden;
+      }
+      .wrap { padding: 20px 22px 24px; height: 100%; overflow-y: auto; }
+      /* 内容超出才滚动；滚动条样式化（细、半透明，不喧宾夺主） */
+      .wrap { scrollbar-width: thin; scrollbar-color: rgba(148, 163, 184, 0.4) transparent; }
+      .wrap::-webkit-scrollbar { width: 6px; }
+      .wrap::-webkit-scrollbar-track { background: transparent; }
+      .wrap::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); border-radius: 999px; }
+      .wrap::-webkit-scrollbar-thumb:hover { background: rgba(148, 163, 184, 0.6); }
+      h1 { font-size: 15px; font-weight: 650; letter-spacing: 0.5px; margin-bottom: 14px; }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 14px 16px;
+        margin-bottom: 12px;
+      }
+      .card h2 {
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.6px;
+        color: var(--muted);
+        margin-bottom: 10px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        font-size: 13px;
+        padding: 7px 0;
+      }
+      .row span { color: var(--muted); }
+      .row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+      .status {
+        font-size: 12px;
+        color: var(--muted);
+        line-height: 1.5;
+        min-height: 20px;
+        margin: 4px 0 10px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      .actions button {
+        background: transparent;
+        border: 1px solid rgba(14, 165, 233, 0.45);
+        color: var(--accent);
+        font-size: 12px;
+        padding: 6px 14px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      .actions button:hover:not(:disabled) { background: rgba(14, 165, 233, 0.14); }
+      .actions button:disabled { opacity: 0.45; cursor: default; }
+      .actions button.primary {
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+        border-color: transparent;
+        color: #fff;
+      }
+      .hint { font-size: 11px; color: var(--muted); opacity: 0.8; line-height: 1.6; margin-top: 8px; }
+      .switch-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        cursor: pointer;
+        user-select: none;
+      }
+      .switch-row input { accent-color: var(--accent); cursor: pointer; }
+
+      /* ===== 更新提醒弹窗 ===== */
+      #update-dialog {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(2, 6, 23, 0.62);
+        z-index: 60;
+      }
+      #update-dialog[hidden] { display: none; }
+      .dlg-card {
+        width: 400px;
+        max-width: 90vw;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        box-shadow: 0 24px 64px rgba(2, 6, 23, 0.55);
+        padding: 24px 24px 20px;
+      }
+      .dlg-card h3 {
+        font-size: 16px;
+        font-weight: 650;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .dlg-card h3 .dlg-badge {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+        box-shadow: 0 0 10px rgba(14, 165, 233, 0.8);
+      }
+      .dlg-card p { font-size: 13px; color: var(--muted); line-height: 1.7; margin: 14px 0 16px; }
+      .dlg-card p b { color: var(--text); font-weight: 600; }
+      .dlg-skip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+        cursor: pointer;
+        user-select: none;
+        margin-bottom: 14px;
+      }
+      .dlg-skip input { accent-color: var(--accent); cursor: pointer; }
+      .dlg-status {
+        font-size: 12px;
+        color: var(--muted);
+        min-height: 18px;
+        margin-bottom: 10px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .dlg-actions { display: flex; justify-content: flex-end; gap: 10px; }
+      .dlg-actions button {
+        background: transparent;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        color: var(--muted);
+        font-size: 13px;
+        padding: 8px 18px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      .dlg-actions button:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+      .dlg-actions button.primary {
+        background: linear-gradient(90deg, var(--accent), var(--accent2));
+        border-color: transparent;
+        color: #fff;
+        font-weight: 600;
+      }
+      .dlg-actions button.primary:hover:not(:disabled) { filter: brightness(1.12); }
+      .dlg-actions button:disabled { opacity: 0.5; cursor: default; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>设置 · 更新配置</h1>
+
+      <div class="card">
+        <h2>通用</h2>
+        <label class="switch-row">
+          <input type="checkbox" id="auto-check" />
+          启动时自动检查更新并提醒
+        </label>
+        <p class="hint">关闭后启动不再自动弹窗提醒；仍可从托盘「更新配置」或本页手动更新。</p>
+      </div>
+
+      <div class="card">
+        <h2>桌面壳更新</h2>
+        <div class="status" id="app-status">正在检查更新…</div>
+        <div class="actions">
+          <button id="btn-check">更新配置</button>
+          <button id="btn-install" class="primary" hidden>立即更新</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>dsh 引擎</h2>
+        <div class="row"><span>当前版本</span><b id="dsh-cur">—</b></div>
+        <div class="row"><span>官方最新</span><b id="dsh-latest">—</b></div>
+        <div class="status" id="dsh-status"></div>
+        <div class="actions">
+          <button id="btn-dsh-check">更新 dsh</button>
+          <button id="btn-dsh-upgrade" class="primary" hidden>升级 dsh</button>
+        </div>
+        <p class="hint" id="dsh-hint"></p>
+      </div>
+
+      <div class="card">
+        <h2>关于</h2>
+        <div class="row"><span>应用版本</span><b id="app-version">—</b></div>
+        <div class="row"><span>dsh 运行方式</span><b id="dsh-mode">—</b></div>
+      </div>
+    </div>
+
+    <!-- 更新提醒弹窗 -->
+    <div id="update-dialog" hidden>
+      <div class="dlg-card">
+        <h3><span class="dlg-badge"></span>发现新版本</h3>
+        <p id="dlg-desc"></p>
+        <label class="dlg-skip"><input type="checkbox" id="dlg-skip-check" />下次启动不再提醒此版本</label>
+        <div class="dlg-status" id="dlg-status"></div>
+        <div class="dlg-actions">
+          <button id="dlg-later">稍后</button>
+          <button id="dlg-install" class="primary">立即更新</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Tauri 注入的全局 API（tauri.conf.json 开启 withGlobalTauri）。
+      const tauriCore = window.__TAURI__ && window.__TAURI__.core;
+      const tauriEvent = window.__TAURI__ && window.__TAURI__.event;
+      const tauriApp = window.__TAURI__ && window.__TAURI__.app;
+
+      const appStatusEl = document.getElementById('app-status');
+      const dshStatusEl = document.getElementById('dsh-status');
+      const btnCheck = document.getElementById('btn-check');
+      const btnInstall = document.getElementById('btn-install');
+      const btnDshCheck = document.getElementById('btn-dsh-check');
+      const btnDshUpgrade = document.getElementById('btn-dsh-upgrade');
+      const dshHint = document.getElementById('dsh-hint');
+      const autoCheck = document.getElementById('auto-check');
+      const dlg = document.getElementById('update-dialog');
+      const dlgInstall = document.getElementById('dlg-install');
+      const dlgLater = document.getElementById('dlg-later');
+      const dlgSkipCheck = document.getElementById('dlg-skip-check');
+      const dlgStatus = document.getElementById('dlg-status');
+      let pendingUpdate = null;
+      let updateAvailable = false;
+
+      function setAppStatus(html) {
+        appStatusEl.innerHTML = html;
+        if (dlgStatus) dlgStatus.textContent = html.replace(/<[^>]*>/g, '');
+      }
+      function setDshStatus(text) { dshStatusEl.textContent = text; }
+
+      // ---- 桌面壳更新 ----
+      async function checkUpdate() {
+        if (!tauriCore) { setAppStatus('当前环境不支持更新配置'); return; }
+        btnCheck.disabled = true;
+        setAppStatus('更新配置中…');
+        try {
+          const info = await tauriCore.invoke('check_app_update');
+          if (info.has_update) {
+            updateAvailable = true;
+            btnInstall.hidden = false;
+            setAppStatus('发现新版本 v' + info.latest_version + '（当前 v' + info.current_version + '）');
+            // 弹出是否更新（勾选过"下次不提醒"的版本不再弹）。
+            try {
+              const skip = await tauriCore.invoke('get_update_prompt_pref');
+              if (info.latest_version !== skip) showUpdateDialog(info);
+            } catch (e) { showUpdateDialog(info); }
+          } else {
+            btnInstall.hidden = true;
+            setAppStatus('已是最新版本（v' + info.current_version + '）');
+          }
+        } catch (e) {
+          setAppStatus('检查更新失败：' + e);
+        } finally {
+          btnCheck.disabled = false;
+        }
+      }
+
+      async function installUpdate() {
+        btnInstall.disabled = true;
+        btnCheck.disabled = true;
+        setAppStatus('正在下载更新…');
+        try {
+          if (tauriEvent) {
+            await tauriEvent.listen('update-progress', (ev) => {
+              const p = ev.payload || {};
+              const pct = p.total ? Math.round((p.downloaded / p.total) * 100) : 0;
+              setAppStatus('正在下载更新… ' + pct + '%');
+            });
+          }
+          await tauriCore.invoke('install_app_update');
+          // 正常不会走到这里：安装完成后应用会自动重启。
+        } catch (e) {
+          setAppStatus('更新失败：' + e);
+          btnInstall.disabled = false;
+          btnCheck.disabled = false;
+          dlgInstall.disabled = false;
+        }
+      }
+
+      // ---- dsh 引擎更新 ----
+      async function checkDsh() {
+        if (!tauriCore) { setDshStatus('当前环境不支持更新配置'); return; }
+        btnDshCheck.disabled = true;
+        setDshStatus('更新 dsh 中…');
+        try {
+          const info = await tauriCore.invoke('check_dsh_update');
+          document.getElementById('dsh-cur').textContent = 'v' + info.current_version;
+          document.getElementById('dsh-latest').textContent = 'v' + info.latest_version;
+          const modeEl = document.getElementById('dsh-mode');
+          if (info.online) {
+            modeEl.textContent = '在线（全局安装）';
+            dshHint.textContent = '在线方案：dsh 装在全局 npm 前缀（与终端 dsh 命令同源），可在此一键升级，升级后自动重启引擎生效。';
+            if (info.has_update) {
+              btnDshUpgrade.hidden = false;
+              setDshStatus('有新版可升级（v' + info.latest_version + '）');
+            } else {
+              btnDshUpgrade.hidden = true;
+              setDshStatus('已是最新版本');
+            }
+          } else {
+            modeEl.textContent = '离线（安装包内置）';
+            btnDshUpgrade.hidden = true;
+            dshHint.textContent = '离线版内置 dsh，升级需维护者 just update 后重新打包发布。';
+            setDshStatus(info.has_update ? '官方已有新版 v' + info.latest_version + '，等待新版安装包发布' : '已是最新版本');
+          }
+        } catch (e) {
+          setDshStatus('检查 dsh 失败：' + e);
+        } finally {
+          btnDshCheck.disabled = false;
+        }
+      }
+
+      async function upgradeDsh() {
+        btnDshUpgrade.disabled = true;
+        setDshStatus('正在升级 dsh…（需下载依赖，请稍候）');
+        try {
+          const v = await tauriCore.invoke('update_online_dsh');
+          btnDshUpgrade.hidden = true;
+          document.getElementById('dsh-cur').textContent = 'v' + v;
+          document.getElementById('dsh-latest').textContent = 'v' + v;
+          setDshStatus('dsh 已升级到 v' + v + '，正在重启引擎…');
+        } catch (e) {
+          setDshStatus('升级 dsh 失败：' + e);
+          btnDshUpgrade.disabled = false;
+        }
+      }
+
+      // ---- 弹窗：是否立即更新 ----
+      function showUpdateDialog(info) {
+        pendingUpdate = info;
+        dlgSkipCheck.checked = false;
+        dlgStatus.textContent = '';
+        dlgInstall.disabled = false;
+        document.getElementById('dlg-desc').innerHTML =
+          '当前版本 <b>v' + info.current_version + '</b>，发现新版本 <b>v' + info.latest_version + '</b>，是否立即更新？';
+        dlg.hidden = false;
+      }
+      function hideUpdateDialog() { dlg.hidden = true; pendingUpdate = null; }
+
+      async function dialogInstall() {
+        dlgInstall.disabled = true;
+        await installUpdate();
+      }
+      async function dialogLater() {
+        // 勾选"下次不提醒"：记住该版本号，之后不再弹此版本的提醒。
+        if (dlgSkipCheck.checked && pendingUpdate && tauriCore) {
+          try {
+            await tauriCore.invoke('set_update_prompt_pref', { version: pendingUpdate.latest_version });
+          } catch (e) { /* 记录失败不影响关闭 */ }
+        }
+        hideUpdateDialog();
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        if (tauriApp) {
+          tauriApp.getVersion().then((v) => {
+            document.getElementById('app-version').textContent = 'v' + v;
+          }).catch(() => {});
+        }
+        if (tauriCore) {
+          tauriCore.invoke('get_auto_check').then((v) => { autoCheck.checked = !!v; }).catch(() => {});
+          tauriCore.invoke('get_dsh_version').then((v) => {
+            if (v && v !== '未知') document.getElementById('dsh-cur').textContent = 'v' + v;
+          }).catch(() => {});
+        }
+        autoCheck.addEventListener('change', () => {
+          if (tauriCore) tauriCore.invoke('set_auto_check', { enabled: autoCheck.checked }).catch(() => {});
+        });
+        btnCheck.addEventListener('click', checkUpdate);
+        btnInstall.addEventListener('click', installUpdate);
+        btnDshCheck.addEventListener('click', checkDsh);
+        btnDshUpgrade.addEventListener('click', upgradeDsh);
+        dlgInstall.addEventListener('click', dialogInstall);
+        dlgLater.addEventListener('click', dialogLater);
+        if (tauriEvent) {
+          // 托盘「更新配置」：立即执行一次检查。
+          tauriEvent.listen('check-update-request', () => checkUpdate());
+          // 后台 dsh 版本检查结果：刷新 dsh 引擎区块。
+          tauriEvent.listen('dsh-update-available', () => checkDsh());
+        }
+        // 打开即检查：桌面壳 + dsh。
+        checkUpdate();
+        checkDsh();
+      });
+    </script>
+  </body>
+</html>

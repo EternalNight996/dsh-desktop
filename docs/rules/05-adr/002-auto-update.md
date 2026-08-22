@@ -12,12 +12,13 @@
   - 更新源：GitHub Releases 的 `latest.json`（`plugins.updater.endpoints`）
   - 签名：`tauri signer` 生成的密钥对；公钥写死进 `tauri.conf.json`，私钥（`.tauri/updater.key`）gitignore，构建时用 `TAURI_SIGNING_PRIVATE_KEY` 注入
   - 安装模式：Windows `passive`（安装时显示进度条，不打扰）
-  - 交互：全部走 Rust 命令（`check_app_update` / `install_app_update`），前端加载页用 `withGlobalTauri` 注入的 `window.__TAURI__` 调用，不引入 npm 打包链
-- dsh（被包装的 Node 应用）**不做运行时更新**：离线方案把 dsh 打进 resources（只读），拉取方案按版本 pin。改为提供「检查 dsh 更新」命令（查 npm registry 最新版），实际升级走构建期 `just update` 重新打包。
+  - 交互：全部走 Rust 命令（`check_app_update` / `install_app_update` / `check_dsh_update` / `update_online_dsh` / `get_dsh_version` 等），设置窗口（`settings.html`）用 `withGlobalTauri` 注入的 `window.__TAURI__` 调用，不引入 npm 打包链；更新入口在**系统托盘**（右键：打开主窗口/设置/检查更新/退出）+ **设置窗口**（独立窗口，加载页保持纯净）；**每次启动后台自动检查**（受「启动时自动检查更新」开关控制），发现新版自动打开设置窗口弹「是否立即更新」，勾选「下次不提醒此版本」后按版本号持久化（`app_data/update-prefs.json`），同一版本不再弹、新版本仍会提醒
+- dsh（被包装的 Node 应用）：**在线方案不做版本 pin，但不自动更新**——启动直接使用**全局安装**（`%APPDATA%\npm`，与终端 dsh 命令 `dsh` 同源；`DSH_GLOBAL_DIR` 可覆盖），未安装（首次运行）才联网安装官方最新版到全局；版本更新由**后台检查**（只查 npm registry 最新版，有新版发事件 `dsh-update-available` 提示）驱动，用户点「更新 dsh」手动触发 `update_online_dsh`（`npm install -g` 升级全局 dsh 并重启 dsh 进程）；在线方案更新 dsh 走 `just update`（升级全局 dsh），离线方案升级走构建期 `just update-offline` 重新打包。另有「检查 dsh 更新」命令（查 npm registry 最新版）供界面展示。
+- dsh 版本**不写死在代码里**（曾用常量 pin，改为运行时读取实际安装/内置的 package.json；构建脚本默认跟随 latest）
 
 ## 理由
 
-- 零侵入：不修改 dsh 任何代码；更新 UI 只出现在壳自己的加载页
+- 零侵入：不修改 dsh 任何代码；更新 UI 在壳自己的设置窗口与系统托盘
 - 复用官方插件，避免自建更新协议；签名（`.sig`）由 tauri bundler 生成，`latest.json` 由发布脚本 `scripts/publish-update.mjs` 生成并统一上传
 - Rust 侧完成下载/安装/重启，前端仅薄展示，加载页无需 bundler
 

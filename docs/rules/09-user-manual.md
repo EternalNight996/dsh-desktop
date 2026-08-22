@@ -24,7 +24,9 @@ DeepSeek Harness Desktop 是一个桌面壳：把 DeepSeek Harness（`dsh`）的
 
 2. 再启动桌面壳：
    ```sh
-   just dev        # 开发运行
+   just run        # 一键本地启动调试（增量构建后直接运行 debug 版 exe）
+   # 或
+   just dev        # 开发运行（带 Rust 热重载）
    # 或
    just dist       # debug 构建，产出 src-tauri/target/debug/dsh-desktop.exe
    ```
@@ -39,3 +41,6 @@ DeepSeek Harness Desktop 是一个桌面壳：把 DeepSeek Harness（`dsh`）的
 | 想改地址/端口 | 修改 `src-tauri/tauri.conf.json` 的 `app.windows[0].url`，同时 dsh 侧用对应 host/port 启动 |
 | 打不开 exe | 检查是否安装 WebView2 运行时 |
 | dsh 更新后界面异常 | dsh 处于 developer preview，版本迭代快，升级后重试或回退版本 |
+| dsh 升级后插件加载报错（如 `keyed slot "settings.plugin.item" requires options.key`） | dsh 新版把 `settings.plugin.item` 改为 keyed slot，要求注册时传 `key`；旧版第三方插件只传 `id` 会报错。升级插件到适配版本：`dsh plugin --profile web add <插件>@<新版>`（如 `dsh-vision-router@1.5.3`）；官方未适配的插件可临时在其 `client.js` 的 `settings.plugin.item` 注册里补 `key: '<id>'`，待官方更新后重新安装覆盖 |
+| 启动时闪出 cmd 黑窗口 | 旧版在线方案的已知问题（npm exec 经 cmd 拉起 dsh）；新版已改为把 dsh 全局安装（`%APPDATA%\npm`）后由内置 node 直接运行，不再弹窗；若仍出现请更新桌面壳 |
+| 更新入口在哪 | 系统托盘右键：打开主窗口 / 设置 / 检查更新 / 退出；设置窗口内可手动检查桌面壳与 dsh 更新；启动发现新版会自动打开设置窗口弹「是否更新」（可勾选「下次不提醒此版本」） |
