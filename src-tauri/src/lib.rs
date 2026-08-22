@@ -391,20 +391,21 @@ fn startup_check_app_update(app: &tauri::AppHandle) {
 }
 
 /// 清理残留的 dsh web 实例（命令行匹配 node 进程中的 dsh bin.js web）。
-/// 防止 dev 反复启动 / 异常退出留下的孤儿进程积累成多实例。
-/// 匹配特征：命令行同时含 "dsh"、"bin.js"、"web" 的 node 进程（即 dsh web 服务本体），
-/// 不匹配其他 node 应用（Cursor / agentmemory 等）。
+/// 防止 dev 反复启动 / 异常退出留下的孤儿进程积累成多实例，也用于更新安装前强制清理。
+/// 匹配特征：命令行同时含 "dsh" 与 "bin.js ... web" 的 node 进程（即 dsh web 服务本体），
+/// 双条件匹配更稳（不限定顺序/路径形式），且不误杀其它 node 应用（Cursor / agentmemory 等）。
 #[cfg(windows)]
 fn cleanup_stale_dsh() {
     let ps = r#"
-Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-  Where-Object { $_.CommandLine -like '*dsh*bin.js*web*' } |
-  ForEach-Object {
-    try {
-      Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop
-      Write-Output ("killed pid=" + $_.ProcessId)
-    } catch {}
-  }
+Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object {
+  $c = $_.CommandLine
+  ($c -like '*bin.js*web*' -and $c -like '*dsh*')
+} | ForEach-Object {
+  try {
+    Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop
+    Write-Output ("killed pid=" + $_.ProcessId)
+  } catch {}
+}
 "#;
     match std::process::Command::new("powershell.exe")
         .creation_flags(CREATE_NO_WINDOW)
