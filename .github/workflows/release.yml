@@ -60,6 +60,8 @@ jobs:
           sudo apt-get install -y patchelf
 
       - name: 准备运行时（node sidecar + npm + dsh，架构跟随 runner）
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: node scripts/vendor.mjs
 
       - name: 为 x64 目标准备 x64 node sidecar（arm64 runner 交叉编译用）

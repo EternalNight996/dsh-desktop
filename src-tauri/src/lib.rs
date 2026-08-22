@@ -277,11 +277,9 @@ const DSH_WORKBAR_INJECT_JS: &str = r#"
         }
       } catch (_) {}
     });
-    const siblings = Array.prototype.slice.call(settingBtn.parentNode.childNodes);
-    const idx = siblings.indexOf(settingBtn);
-    const next = siblings[idx + 1] || null;
-    settingBtn.parentNode.insertBefore(btn, next);
-    log('更新配置按钮已插入（位于设置入口旁）');
+    // 把「更新配置」插到「设置」之前：让底部工作栏显示为 记忆 → 更新配置 → 设置。
+    settingBtn.parentNode.insertBefore(btn, settingBtn);
+    log('更新配置按钮已插入（位于设置入口之前）');
     return true;
   }
   let tries = 0;

@@ -107,7 +107,8 @@ if (update) {
 if (!existsSync(join(dshDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))) {
   console.log(`install dsh@${dshVersion} -> ${dshDir}`);
   mkdirSync(dshDir, { recursive: true });
-  execSync(`npm install --prefix "${dshDir}" --omit=dev --registry=${dshRegistry} @deepseek-ai/dsh@${dshVersion}`, { stdio: 'inherit', cwd: root });
+  // 提高 Node 堆上限，避免 macOS（尤其 arm64）上 npm install 依赖树过大触发 V8 OOM。
+  execSync(`npm install --prefix "${dshDir}" --omit=dev --registry=${dshRegistry} @deepseek-ai/dsh@${dshVersion}`, { stdio: 'inherit', cwd: root, env: { ...process.env, NODE_OPTIONS: process.env.NODE_OPTIONS || '--max-old-space-size=4096' } });
 } else {
   console.log(`dsh 已就绪: ${join(dshDir, 'node_modules', '@deepseek-ai', 'dsh')}`);
 }
