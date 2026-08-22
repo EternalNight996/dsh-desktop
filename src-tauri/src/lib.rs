@@ -13,6 +13,7 @@
 
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -23,6 +24,10 @@ use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
+
+/// 工作栏「更新配置」按钮是否已成功注入。注入脚本成功时会经 `log_workbar_inject` 置位，
+/// 供 `spawn_dsh` 的重复注入循环判断停止（避免固定 sleep 造成的额外等待）。
+static WORKBAR_INJECTED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -186,6 +191,9 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 fn log_workbar_inject(message: String) {
     eprintln!("[dsh-desktop] 工作栏注入: {message}");
+    if message.contains("已插入") {
+        WORKBAR_INJECTED.store(true, Ordering::Relaxed);
+    }
 }
 
 /// 注入到 dsh Web UI 的脚本：等待其底部工作栏（launcher）渲染后，找到「设置」按钮，
@@ -283,20 +291,29 @@ const DSH_WORKBAR_INJECT_JS: &str = r#"
     return true;
   }
   let tries = 0;
+  let mo = null;
   function tryInject() {
     if (tries > 120) { log('未能定位工作栏设置按钮（' + tries + ' 次仍无）'); return; }
     const settingBtn = findSettingsButton();
     if (!settingBtn) return;
     if (settingBtn.__dshInjected__) return;
     settingBtn.__dshInjected__ = true;
-    insertBtn(settingBtn);
+    if (insertBtn(settingBtn)) {
+      if (mo) { try { mo.disconnect(); } catch (_) {} }
+      clearInterval(poll);
+    }
   }
+  // 首选 MutationObserver：dsh 工作栏一旦挂载立即注入（比纯轮询更即时）；轮询作兜底。
+  try {
+    mo = new MutationObserver(function () { tryInject(); });
+    mo.observe(document.body, { childList: true, subtree: true });
+  } catch (_) {}
   // 轮询等待 dsh 工作栏（SPA 异步挂载）渲染。
   var poll = setInterval(function () {
     tries += 1;
     tryInject();
-    if (tries > 130) clearInterval(poll);
-  }, 600);
+    if (tries > 130) { clearInterval(poll); if (mo) { try { mo.disconnect(); } catch (_) {} } }
+  }, 500);
 })();
 "#;
 
@@ -421,12 +438,21 @@ fn spawn_dsh(app: &tauri::AppHandle) {
             if let Some(win) = handle.get_webview_window("main") {
                 if let Ok(parsed) = url::Url::parse(&url) {
                     let _ = win.navigate(parsed);
-                    // dsh 是 SPA，页面整页导航需时间渲染；延迟几秒等文档切换完成后再注入，
-                    // 注入脚本内部另有 78s 轮询等待工作栏 DOM（hashed 类名故按语义自省）。
+                    // dsh 是 SPA，整页导航会替换当前文档；不能在导航前就注入（会被丢弃）。
+                    // 改为重复注入：脚本幂等（window.__dshWorkbarInjected__），只有落在 dsh 文档里
+                    // 才真正生效；一旦 dsh 工作栏挂载，注入脚本即用 MutationObserver/轮询立即插入
+                    // 「更新配置」，去掉了原先固定的 6 秒 sleep 造成的额外等待。成功即停。
+                    WORKBAR_INJECTED.store(false, Ordering::Relaxed);
                     let wh = handle.clone();
                     std::thread::spawn(move || {
-                        std::thread::sleep(Duration::from_secs(6));
-                        inject_workbar_button(&wh);
+                        // 重复 eval：脚本用 window 标志幂等，首次命中 dsh 文档即由脚本内部等待
+                        // 工作栏挂载后注入；30s 兜底停止。
+                        let deadline = Instant::now() + Duration::from_secs(30);
+                        while Instant::now() < deadline {
+                            if WORKBAR_INJECTED.load(Ordering::Relaxed) { break; }
+                            inject_workbar_button(&wh);
+                            std::thread::sleep(Duration::from_millis(1000));
+                        }
                     });
                 }
             }
