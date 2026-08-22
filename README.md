@@ -7,6 +7,8 @@
     <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2.x-orange.svg" />
     <img alt="Platform" src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg" />
     <img alt="dsh" src="https://img.shields.io/badge/dsh-跟随官方最新-5b8def.svg" />
+    <img alt="GitHub Stars" src="https://img.shields.io/github/stars/EternalNight996/dsh-desktop?style=social" />
+    <img alt="Gitee Stars" src="https://img.shields.io/gitee/stars/eternalnight996/dsh-desktop?style=social" />
   </p>
   <p>
     <a href="https://gitee.com/eternalnight996/dsh-desktop/releases">📦 立刻下载</a> |
@@ -60,11 +62,13 @@
   <img src="assets/screen/像素人办公室角色2.png" width="820" alt="像素办公室-办公室浮层" />
 </p>
 
-### 💬 对话主界面
+### ⚙️ 更新配置窗口（新增）
 
 <p align="center">
-  <img src="assets/screen/DSH界面.png" width="820" alt="dsh 对话主界面" />
+  <img src="assets/screen/更新配置窗口.png" width="460" alt="设置·更新配置窗口" />
 </p>
+
+「更新配置」入口已移至 dsh 工作栏底部 **设置** 之前（记忆 → 更新配置 → 设置）。点开即弹出独立**设置·更新配置窗口**：内置桌面壳与 dsh 双更新入口、版本与运行方式一览、随时一键升级。关闭主窗口会最小化到托盘，更新配置常驻托盘与设置窗口。
 
 ## 🚀 三步上手
 
