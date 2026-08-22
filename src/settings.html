@@ -199,10 +199,13 @@
         <h2>dsh 引擎</h2>
         <div class="row"><span>当前版本</span><b id="dsh-cur">—</b></div>
         <div class="row"><span>官方最新</span><b id="dsh-latest">—</b></div>
+        <div class="row"><span>终端 dsh 命令</span><b id="cli-dsh-path">—</b></div>
         <div class="status" id="dsh-status"></div>
+        <div class="status" id="cli-status"></div>
         <div class="actions">
           <button id="btn-dsh-check">更新 dsh</button>
           <button id="btn-dsh-upgrade" class="primary" hidden>升级 dsh</button>
+          <button id="btn-cli-unify" hidden>统一终端 dsh</button>
         </div>
         <p class="hint" id="dsh-hint"></p>
       </div>
@@ -353,6 +356,46 @@
         }
       }
 
+      // ---- 终端 dsh 命令路径统一 ----
+      const cliPathEl = document.getElementById('cli-dsh-path');
+      const cliStatusEl = document.getElementById('cli-status');
+      const btnCliUnify = document.getElementById('btn-cli-unify');
+      function renderCliStatus(s) {
+        if (!s) return;
+        cliPathEl.textContent = s.terminal_path || '未找到';
+        if (s.unified) {
+          cliStatusEl.textContent = '';
+          btnCliUnify.hidden = true;
+          cliPathEl.style.color = '';
+        } else if (s.kind === 'missing') {
+          cliStatusEl.textContent = '终端里没有 dsh 命令，点下方按钮自动加入 PATH';
+          btnCliUnify.hidden = false;
+          cliPathEl.style.color = '#c0392b';
+        } else {
+          cliStatusEl.textContent = '终端 dsh 指向了另一份副本（与桌面壳不同源、版本会漂移），点下方按钮统一';
+          btnCliUnify.hidden = false;
+          cliPathEl.style.color = '#c0392b';
+        }
+      }
+      async function refreshCli() {
+        if (!tauriCore) return;
+        try { renderCliStatus(await tauriCore.invoke('get_dsh_cli_status')); } catch (e) { /* 展示不了就算了 */ }
+      }
+      async function unifyCli() {
+        if (!tauriCore) return;
+        btnCliUnify.disabled = true;
+        cliStatusEl.textContent = '统一中…（如弹管理员授权请允许）';
+        try {
+          const msg = await tauriCore.invoke('unify_dsh_cli');
+          cliStatusEl.textContent = msg;
+          await refreshCli();
+        } catch (e) {
+          cliStatusEl.textContent = '统一失败：' + e;
+        } finally {
+          btnCliUnify.disabled = false;
+        }
+      }
+
       // ---- 弹窗：是否立即更新 ----
       function showUpdateDialog(info) {
         pendingUpdate = info;
@@ -398,6 +441,7 @@
         btnInstall.addEventListener('click', installUpdate);
         btnDshCheck.addEventListener('click', checkDsh);
         btnDshUpgrade.addEventListener('click', upgradeDsh);
+        btnCliUnify.addEventListener('click', unifyCli);
         dlgInstall.addEventListener('click', dialogInstall);
         dlgLater.addEventListener('click', dialogLater);
         if (tauriEvent) {
@@ -405,10 +449,13 @@
           tauriEvent.listen('check-update-request', () => checkUpdate());
           // 后台 dsh 版本检查结果：刷新 dsh 引擎区块。
           tauriEvent.listen('dsh-update-available', () => checkDsh());
+          // 后台终端 dsh 统一结果：刷新状态行。
+          tauriEvent.listen('dsh-cli-status', (e) => renderCliStatus(e.payload));
         }
-        // 打开即检查：桌面壳 + dsh。
+        // 打开即检查：桌面壳 + dsh + 终端路径。
         checkUpdate();
         checkDsh();
+        refreshCli();
       });
     </script>
   </body>

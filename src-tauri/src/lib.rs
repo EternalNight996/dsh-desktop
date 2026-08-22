@@ -81,7 +81,9 @@ pub fn run() {
             get_auto_check,
             set_auto_check,
             open_settings,
-            log_workbar_inject
+            log_workbar_inject,
+            get_dsh_cli_status,
+            unify_dsh_cli
         ])
         .setup(|app| {
             // 托盘图标：主窗口被 dsh UI 占据后，更新/设置入口常驻系统托盘。
@@ -96,6 +98,9 @@ pub fn run() {
             // 启动后台检查桌面壳更新：有新版且未关闭提醒/未跳过该版本 → 打开设置窗口弹"是否更新"。
             let handle = app.handle().clone();
             std::thread::spawn(move || startup_check_app_update(&handle));
+            // 后台统一终端 dsh 命令路径：检测 PATH 抢占/缺失并自动修复（装了 dsh-desktop 即同源）。
+            let handle = app.handle().clone();
+            std::thread::spawn(move || auto_unify_dsh_cli(&handle));
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -1015,6 +1020,311 @@ async fn update_online_dsh(app: tauri::AppHandle) -> Result<String, String> {
     // 3. 重新拉起 dsh 并切窗口。
     spawn_dsh(&app);
     Ok(latest)
+}
+
+// ===== 终端 dsh 命令路径统一（桌面壳与终端同源） =====
+// 背景：端用户可能自己 `npm i -g @deepseek-ai/dsh`（管理员终端）装到机器级前缀
+// （C:\Program Files\nodejs），系统 PATH 又排在用户级 %APPDATA%\npm 之前，
+// 终端 `dsh`/`npx dsh` 会解析到旧副本，与桌面壳管理的副本分裂、版本漂移。
+// 目标：装了 dsh-desktop 就自动统一——启动时检测 PATH 抢占/缺失并自动修复，
+// 用户零心智负担；需要管理员权限时弹一次 UAC，失败进入 7 天冷却（设置页可手动重试）。
+
+/// 终端 dsh 命令解析状态。
+#[derive(Clone, Serialize)]
+struct DshCliStatus {
+    /// 终端 dsh 是否已与桌面壳管理的副本同源。
+    unified: bool,
+    /// ok=已同源 / npm-global=其它 npm 全局前缀抢占（可自动修复）/ other-path=非 npm 来源抢占（仅提示）/ missing=终端无 dsh。
+    kind: String,
+    /// 桌面壳管理的全局前缀（Windows 为 %APPDATA%\npm）。
+    app_prefix: String,
+    /// 终端实际解析到的 dsh（where 第一命中）。
+    terminal_path: Option<String>,
+    /// 所有抢占来源（非本前缀的 dsh 入口，含已在阴影中的）。
+    foreign_paths: Vec<String>,
+}
+
+/// 路径目录归一化：小写、反斜杠、去尾部斜杠、去 \\?\ 前缀，用于跨形式比较。
+#[cfg(windows)]
+fn normalize_dir(p: &Path) -> String {
+    let mut s = display_path(p).to_lowercase().replace('/', "\\");
+    while s.ends_with('\\') {
+        s.pop();
+    }
+    s
+}
+
+/// 扫描终端 dsh 命令解析：where.exe 按 PATH 顺序列出全部命中，第一命中即终端实际执行者。
+#[cfg(windows)]
+fn scan_terminal_dsh() -> DshCliStatus {
+    let app_prefix = global_dsh_dir().unwrap_or_default();
+    let prefix_norm = normalize_dir(&app_prefix);
+    let mut hits: Vec<String> = Vec::new();
+    if let Ok(out) = std::process::Command::new("where.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .arg("dsh")
+        .output()
+    {
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let t = line.trim();
+            if !t.is_empty() {
+                hits.push(t.to_string());
+            }
+        }
+    }
+    let terminal_path = hits.first().cloned();
+    let foreign_paths: Vec<String> = hits
+        .iter()
+        .filter(|h| {
+            Path::new(h)
+                .parent()
+                .map(|d| normalize_dir(d) != prefix_norm)
+                .unwrap_or(true)
+        })
+        .cloned()
+        .collect();
+    let (unified, kind) = match terminal_path.as_deref() {
+        None => (false, "missing".to_string()),
+        Some(first) => {
+            let winner = Path::new(first).parent().map(normalize_dir).unwrap_or_default();
+            if winner == prefix_norm {
+                (true, "ok".to_string())
+            } else if Path::new(first)
+                .parent()
+                .map(|d| d.join("node_modules/@deepseek-ai/dsh").exists())
+                .unwrap_or(false)
+            {
+                (false, "npm-global".to_string())
+            } else {
+                (false, "other-path".to_string())
+            }
+        }
+    };
+    DshCliStatus {
+        unified,
+        kind,
+        app_prefix: display_path(&app_prefix),
+        terminal_path,
+        foreign_paths,
+    }
+}
+
+#[cfg(not(windows))]
+fn scan_terminal_dsh() -> DshCliStatus {
+    // POSIX：globalize 良好场景下终端与桌面壳共用 ~/.npm-global，暂不做抢占检测。
+    DshCliStatus {
+        unified: true,
+        kind: "ok".to_string(),
+        app_prefix: global_dsh_dir().map(|d| display_path(&d)).unwrap_or_default(),
+        terminal_path: None,
+        foreign_paths: vec![],
+    }
+}
+
+/// 运行一段 PowerShell 脚本（无窗口），返回 (成功?, stdout+stderr)。
+/// 通过环境变量 DSH_PREFIX 传参，彻底规避引号转义问题（同 cleanup_stale_dsh 的教训）。
+fn run_ps(script: &str, prefix: &str) -> (bool, String) {
+    match std::process::Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .env("DSH_PREFIX", prefix)
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .output()
+    {
+        Ok(out) => {
+            let mut s = String::from_utf8_lossy(&out.stdout).to_string();
+            s.push_str(&String::from_utf8_lossy(&out.stderr));
+            (out.status.success(), s)
+        }
+        Err(e) => (false, format!("{e}")),
+    }
+}
+
+/// 确保 %APPDATA%\npm 在用户 PATH（读注册表不展开形式，保留 %VAR% 引用；写回原值类型并广播环境变更）。
+#[cfg(windows)]
+fn ensure_user_path_contains_prefix() -> Result<(), String> {
+    let prefix = global_dsh_dir().ok_or("无法定位全局前缀")?;
+    let ps = r#"
+$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+if ($null -eq $k) { Write-Output 'ERR: 打不开 HKCU\Environment'; exit 1 }
+$kind = try { $k.GetValueKind('Path') } catch { 'String' }
+$raw = [string]$k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+$expanded = [Environment]::ExpandEnvironmentVariables($raw)
+if ($expanded -split ';' -notcontains $env:DSH_PREFIX) {
+  $new = if ($raw.Trim()) { $raw.TrimEnd(';') + ';' + $env:DSH_PREFIX } else { $env:DSH_PREFIX }
+  $type = if ($kind -eq 'ExpandString') { 'ExpandString' } else { 'String' }
+  $k.SetValue('Path', $new, [Microsoft.Win32.RegistryValueKind]::$type)
+  try {
+    Add-Type -Namespace W32 -Name NM -MemberDefinition '[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
+    $r = [UIntPtr]::Zero
+    [W32.NM]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$r) | Out-Null
+  } catch {}
+  Write-Output 'ADDED'
+} else { Write-Output 'EXISTS' }
+"#;
+    let (ok, out) = run_ps(ps, &display_path(&prefix));
+    if ok { Ok(()) } else { Err(format!("写入用户 PATH 失败: {out}")) }
+}
+
+/// 无提权直接移除外来 npm 前缀里的 dsh（目录可写时）。先探测可写性，避免删一半。
+#[cfg(windows)]
+fn try_remove_foreign_direct(dir: &Path) -> bool {
+    let probe = dir.join(".dsh-desktop-write-probe");
+    let writable = std::fs::write(&probe, b"").is_ok();
+    let _ = std::fs::remove_file(&probe);
+    if !writable {
+        return false;
+    }
+    for shim in ["dsh", "dsh.cmd", "dsh.ps1"] {
+        let p = dir.join(shim);
+        if p.exists() {
+            if let Err(e) = std::fs::remove_file(&p) {
+                eprintln!("[dsh-desktop] 删除外来 dsh 入口失败 {}: {e}", display_path(&p));
+                return false;
+            }
+        }
+    }
+    let pkg = dir.join("node_modules/@deepseek-ai/dsh");
+    if pkg.exists() {
+        if let Err(e) = std::fs::remove_dir_all(&pkg) {
+            eprintln!("[dsh-desktop] 删除外来 dsh 包失败 {}: {e}", display_path(&pkg));
+            return false;
+        }
+    }
+    true
+}
+
+/// 提权卸载机器级 npm 前缀里的 dsh（Program Files 等不可写目录）。会弹一次 UAC。
+#[cfg(windows)]
+fn elevated_npm_uninstall(dir: &Path) -> Result<(), String> {
+    let ps = r#"
+try {
+  $p = Start-Process -FilePath 'npm.cmd' -ArgumentList @('uninstall','-g','@deepseek-ai/dsh','--prefix', $env:DSH_PREFIX) -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+  if ($p.ExitCode -ne 0) { Write-Output ('ERR: npm 退出码 ' + $p.ExitCode); exit 1 }
+  Write-Output 'OK'
+} catch { Write-Output ('ERR: ' + $_.Exception.Message); exit 2 }
+"#;
+    let (ok, out) = run_ps(ps, &display_path(dir));
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("提权卸载失败（用户取消或 npm 出错）: {out}"))
+    }
+}
+
+/// 统一终端 dsh：按冲突类型自动修复，返回人话结果。
+#[cfg(windows)]
+fn unify_terminal_dsh() -> Result<String, String> {
+    let st = scan_terminal_dsh();
+    if st.unified {
+        return Ok("终端 dsh 已与桌面壳同源".into());
+    }
+    match st.kind.as_str() {
+        "missing" => {
+            ensure_user_path_contains_prefix()?;
+            let after = scan_terminal_dsh();
+            if after.unified {
+                Ok("已把全局前缀加入用户 PATH，新开终端即生效".into())
+            } else {
+                Err("已写入 PATH 但仍解析异常，请检查环境变量".into())
+            }
+        }
+        "npm-global" => {
+            let winner = Path::new(
+                st.terminal_path.as_deref().unwrap_or_default(),
+            )
+            .parent()
+            .ok_or("无法定位抢占来源目录")?
+            .to_path_buf();
+            eprintln!(
+                "[dsh-desktop] 检测到终端 dsh 被另一 npm 全局前缀抢占: {}",
+                display_path(&winner)
+            );
+            if !try_remove_foreign_direct(&winner) {
+                elevated_npm_uninstall(&winner)?;
+            }
+            // 删完外来副本后若终端仍找不到 dsh（用户 PATH 缺前缀），补上。
+            let after = scan_terminal_dsh();
+            if after.kind == "missing" {
+                let _ = ensure_user_path_contains_prefix();
+            }
+            let final_st = scan_terminal_dsh();
+            if final_st.unified {
+                Ok(format!(
+                    "已移除抢占副本（{}），终端 dsh 现与桌面壳同源",
+                    display_path(&winner)
+                ))
+            } else {
+                Err("卸载完成但终端解析仍异常，请重启终端后重试".into())
+            }
+        }
+        _ => Err(format!(
+            "检测到非 npm 来源的 dsh 抢占 PATH（{}），请在设置中手动处理",
+            st.foreign_paths.join(", ")
+        )),
+    }
+}
+
+#[cfg(not(windows))]
+fn unify_terminal_dsh() -> Result<String, String> {
+    Ok("此平台暂无需统一".into())
+}
+
+/// 启动后台自动统一：失败进入 7 天冷却，避免每次启动都弹 UAC 打扰。
+fn auto_unify_dsh_cli(app: &tauri::AppHandle) {
+    let st = scan_terminal_dsh();
+    if st.unified {
+        eprintln!(
+            "[dsh-desktop] 终端 dsh 已同源: {}",
+            st.terminal_path.as_deref().unwrap_or("(无)")
+        );
+        let _ = app.emit("dsh-cli-status", st);
+        return;
+    }
+    eprintln!(
+        "[dsh-desktop] 终端 dsh 不同源（{}），尝试自动统一…",
+        st.kind
+    );
+    // 冷却：上次失败 7 天内不再自动尝试（设置页按钮不受冷却限制）。
+    if let Some(dir) = app.path().app_config_dir().ok() {
+        let marker = dir.join("dsh-cli-unify.fail");
+        if let Ok(meta) = std::fs::metadata(&marker) {
+            if let Ok(mtime) = meta.modified() {
+                if mtime.elapsed().map(|d| d.as_secs() < 7 * 86400).unwrap_or(false) {
+                    eprintln!("[dsh-desktop] 自动统一冷却中（上次失败未满 7 天），跳过");
+                    let _ = app.emit("dsh-cli-status", st);
+                    return;
+                }
+            }
+        }
+    }
+    match unify_terminal_dsh() {
+        Ok(msg) => {
+            eprintln!("[dsh-desktop] 统一成功: {msg}");
+            if let Some(dir) = app.path().app_config_dir().ok() {
+                let _ = std::fs::remove_file(dir.join("dsh-cli-unify.fail"));
+            }
+        }
+        Err(e) => {
+            eprintln!("[dsh-desktop] 自动统一失败: {e}");
+            if let Some(dir) = app.path().app_config_dir().ok() {
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::fs::write(dir.join("dsh-cli-unify.fail"), b"");
+            }
+        }
+    }
+    let _ = app.emit("dsh-cli-status", scan_terminal_dsh());
+}
+
+/// 查询终端 dsh 命令解析状态（设置页展示）。
+#[tauri::command]
+fn get_dsh_cli_status() -> DshCliStatus {
+    scan_terminal_dsh()
+}
+
+/// 手动触发统一（设置页按钮，不受冷却限制）。
+#[tauri::command]
+fn unify_dsh_cli() -> Result<String, String> {
+    unify_terminal_dsh()
 }
 
 // ===== 更新偏好（启动自动检查开关 + "下次不提醒此版本"） =====
