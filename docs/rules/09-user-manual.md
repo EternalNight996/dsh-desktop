@@ -18,7 +18,7 @@ DeepSeek Harness Desktop 是一个桌面壳：把 DeepSeek Harness（`dsh`）的
 
 1. 先启动 dsh 服务：
    ```sh
-   npx @deepseek-ai/dsh web
+   dsh web   # 桌面壳已把 dsh 统一到全局（%APPDATA%\npm），直接用 dsh；不要用 npx @deepseek-ai/dsh（会重新下载）
    ```
    默认监听 `http://127.0.0.1:3080`。
 
@@ -37,7 +37,7 @@ DeepSeek Harness Desktop 是一个桌面壳：把 DeepSeek Harness（`dsh`）的
 
 | 问题 | 处理 |
 |---|---|
-| 窗口空白 / 打不开 | 确认已先运行 `npx @deepseek-ai/dsh web`，且端口 3080 未被占用 |
+| 窗口空白 / 打不开 | 确认已先运行 `dsh web`，且端口 3080 未被占用 |
 | 想改地址/端口 | 修改 `src-tauri/tauri.conf.json` 的 `app.windows[0].url`，同时 dsh 侧用对应 host/port 启动 |
 | 打不开 exe | 检查是否安装 WebView2 运行时 |
 | dsh 更新后界面异常 | dsh 处于 developer preview，版本迭代快，升级后重试或回退版本 |

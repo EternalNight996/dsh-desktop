@@ -42,7 +42,7 @@
 
 ### 🧑‍💼 像素人办公室：你的专家天团已入职
 
-> 可选插件：先装 [dsh-market 插件市场](https://github.com/dsh-market/dsh-market)（`dsh plugin add dshmarket`，界面浏览/一键安装）或直接 `npx @deepseek-ai/dsh plugin --profile web add dsh-ui-agents-pixe`（独立 npm 包，桌面壳默认不内置）。
+> 可选插件：先装 [dsh-market 插件市场](https://github.com/dsh-market/dsh-market)（`dsh plugin add dshmarket`，界面浏览/一键安装）或直接 `dsh plugin --profile web add dsh-ui-agents-pixe`（独立 npm 包，桌面壳默认不内置）。**一律用 `dsh` 命令（桌面壳已把终端 dsh 统一到同一份，零下载），不要用 `npx @deepseek-ai/dsh`（npx 对包名每次都会重新下载一份，装插件不该重装 dsh）。**
 
 把 **255+ 位专家**（17 个部门）变成**会动的像素小人**：
 
