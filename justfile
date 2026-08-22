@@ -41,6 +41,15 @@ setup-linux:
 vendor:
     node scripts/vendor.mjs
 
+# 一键部署全套「原创插件」到 web profile（从 GitHub 源安装，不经 npm，避免 npx 重复下载 dsh）
+# Windows 用 PowerShell 脚本（也可直接双击 scripts/install-plugins.ps1）；macOS/Linux 用 sh 循环。
+install-plugins:
+    @{{ if os() == "windows" {
+        "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-plugins.ps1"
+    } else {
+        "for p in dsh-theme dsh-memory-eternal dsh-ui-three-body dsh-ui-agents-pixe; do dsh plugin --profile web add github:EternalNight996/$p; done"
+    } }}
+
 # 更新全局 dsh（默认）：自动查 npm 官方最新版并一键升级终端 dsh 命令 + 桌面壳在线 dsh
 #（两者同源：Windows→%APPDATA%\npm / macOS-Linux→~/.npm-global，改源码；用后需重开终端，重启桌面壳生效）
 update:

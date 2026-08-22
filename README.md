@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/logo.png" width="110" alt="DeepSeek Harness 桌面工作台 Logo" />
   <h1>dsh-desktop · DeepSeek Harness 桌面工作台</h1>
-  <h3>🤖 AI 打工人的快乐老家 —— 双击即用，255+ 像素专家天团（独立插件）可一键加装</h3>
+  <h3>🖥️ AI 打工人的快乐老家 —— <b>会动的桌面</b> · 508 位像素专家天团随叫随到 · 自动更新 · 双击即用</h3>
   <p>
     <img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg" />
     <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2.x-orange.svg" />
@@ -18,56 +18,87 @@
   </p>
 </div>
 
+<!-- ⭐ 展示导览：主 GIF（会动的桌面）置顶，下方按插件/功能展开 -->
 <p align="center">
-  <img src="assets/screen/main.gif" width="860" alt="DeepSeek Harness 桌面工作台全功能预览" />
+  <img src="assets/screen/dsh-desktop.gif" width="880" alt="dsh-desktop 主界面：会动的像素办公室（508 位专家）" />
 </p>
 
 ---
 
-> **一句话读懂它**：不用装 Node、不用开终端、不用敲任何命令 —— **双击图标**，一个「有人味」的 AI 工作台就自动出现：
+> **一句话读懂它**：不用装 Node、不用开终端、不用敲任何命令 —— **双击图标**，一个「有人味」、**会动**的 AI 工作台就自动出现：
 >
-> 🧑‍💼 **像素人办公室**（独立插件，一键加装）：255+ 位专家角色变成像素小人，在办公室里走来走去、互相闲聊、随时听你差遣。
+> 🧑‍💼 这是**会动的桌面**：508 位专家角色变成像素小人，在办公室里走来走去、互相闲聊、随时听你差遣。
 >
 > 基于官方 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 打包 —— 不 fork、不改源码，官方更新即用。
 
-## ✨ 三个让人「哇哦」的理由
+## ✨ 三大卖点
 
-### 🚀 开箱即用，零门槛
+### 🧑‍💼 会动的桌面：508 位像素专家天团
 
-下载安装包 → 双击 → 开聊。**不用装 Node、不用开终端、不用配环境**，连 WebView2 都帮你装好；离线安装包断网也能跑。
+把 **508 张完整角色卡**（The Agency 255 + agency-agents-zh 253，17 个部门）变成**会动的像素小人**：
 
-### 🔄 自动更新，永远最新
-
-桌面壳自己会**每次启动自动检查新版本**：发现更新 → 自动打开设置窗口弹出「是否立即更新」（可勾选「下次不提醒此版本」）→ 一键下载安装 → 自动重启。更新入口常驻**系统托盘**（右键：打开主窗口 / 设置 / 检查更新 / 退出），设置窗口里也能手动检查。**关闭窗口会最小化到托盘（不退出，dsh 服务随桌面壳一并常驻后台），托盘「打开主窗口」即可秒开、不再重建 dsh 服务；真正退出请用托盘右键「退出」。** 在线版 dsh 启动直接使用**全局安装**（`%APPDATA%\npm`，与终端 dsh 命令同源），**后台检查官方新版本**，在设置窗口**一键升级**；更新源双端互备（国内自动走 Gitee，失败回退 GitHub），就算某一天某一边抽风，另一边照样能更。
-
-### 🧑‍💼 像素人办公室：你的专家天团已入职
-
-> 可选插件：先装 [dsh-market 插件市场](https://github.com/dsh-market/dsh-market)（`dsh plugin add dshmarket`，界面浏览/一键安装）或直接 `dsh plugin --profile web add dsh-ui-agents-pixe`（独立 npm 包，桌面壳默认不内置）。**一律用 `dsh` 命令（桌面壳已把终端 dsh 统一到同一份，零下载），不要用 `npx @deepseek-ai/dsh`（npx 对包名每次都会重新下载一份，装插件不该重装 dsh）。**
-
-把 **255+ 位专家**（17 个部门）变成**会动的像素小人**：
-
-- 🚶 他们会**走来走去**、敲电脑、下班躺床，办公室里有饮水机、书架、吊灯
+- 🚶 他们**走来走去**、敲电脑、下班躺床，办公室里有饮水机、书架、吊灯
 - 💬 他们**互相闲聊**，还能接 AI 让台词更像人
 - 👑 一键**团队编排**：29 个预设团队（研发 / 安全 / AI大模型 / 区块链 / 跨境电商…），角色名配**历史名人**——图灵、霍金、刘慈欣、辛顿，都是你的同事
 - 🔍 每个会话专属办公室，**重启不丢**，状态持久化
+- 🎨 Canvas 2D 像素小人可站立、打字、踱步，浮层可**拖动折叠缩放**，选人即入列
 
-## 🖼️ 界面预览
+> 独立插件，桌面壳默认不内置，一键加装（见下方「原创插件全家桶」）。
 
-> 📸 全部真实抓屏。顶部 GIF 是全局总览，下面按模块展开细看。
+### 🔄 自动更新，永远最新
 
-### 🧑‍💼 像素人办公室（可选插件效果）
+桌面壳自己会**每次启动自动检查新版本**：发现更新 → 自动打开设置窗口弹出「是否立即更新」（可勾选「下次不提醒此版本」）→ 一键下载安装 → 自动重启。更新入口常驻**系统托盘**（右键：打开主窗口 / 设置 / 检查更新 / 退出），设置窗口里也能手动检查。
 
+在线版 dsh 启动直接使用**全局安装**（`%APPDATA%\npm`，与终端 dsh 命令同源），**后台检查官方新版本**，在设置窗口**一键升级**；更新源**双端互备**（国内自动走 Gitee，失败回退 GitHub），就算某一天某一边抽风，另一边照样能更。
+
+### ⚡ 随叫随到：托盘常驻，一唤即开
+
+**关闭窗口会最小化到托盘（不退出），dsh 服务随桌面壳一并常驻后台**；托盘「打开主窗口」即可**秒开**、不再重建 dsh 服务。打开它、关掉它、再点开它，都在一瞬间——就像桌面上一个「随叫随到」的同事，真正退出才用托盘右键「退出」。
+
+## 🖼️ 界面预览 · 原创插件全家桶
+
+> 📸 全部真实抓屏，顶部 GIF 是整体总览。会动的桌面、主题、记忆、驯兽师内核、自动更新都由**可选插件**提供，桌面壳默认不内置。
+
+### 🔌 一键安装所有原创插件
+
+桌面壳已经把终端 `dsh` 统一到同一份（零下载），装插件**不会重装 dsh**。一条命令装齐 4 个原创插件（从 GitHub 源安装，不经过 npm）：
+
+```sh
+just install-plugins        # 或直接运行 scripts/install-plugins.ps1（Windows 双击）
+```
+
+### 🧑‍💼 会动的桌面 · 像素办公室（[dsh-ui-agents-pixe](https://github.com/EternalNight996/dsh-ui-agents-pixe)）
 <p align="center">
-  <img src="assets/screen/像素办公室角色.png" width="820" alt="像素办公室-工作角色页签" />
-  <img src="assets/screen/像素人办公室角色2.png" width="820" alt="像素办公室-办公室浮层" />
+  <img src="assets/screen/dsh-ui-agents-pixe.png" width="760" alt="像素办公室：508 位专家角色卡" />
+  <img src="assets/screen/dsh-ui-agents-pixe setting.png" width="760" alt="像素办公室：办公室浮层" />
 </p>
+**508 张完整角色卡**（The Agency 255 + agency-agents-zh 253，17 部门）；Canvas 2D 像素小人可站立、打字、踱步，浮层可拖动折叠缩放，选人即入列，闲聊可接 AI。
 
-### ⚙️ 更新配置窗口（新增）
-
+### 🎨 主题皮肤（[dsh-theme](https://github.com/EternalNight996/dsh-theme)）
 <p align="center">
-  <img src="assets/screen/更新配置窗口.png" width="460" alt="设置·更新配置窗口" />
+  <img src="assets/screen/dsh-theme setting.png" width="760" alt="主题皮肤-设置" />
+  <img src="assets/screen/dsh-theme setting2.png" width="760" alt="主题皮肤-360 跟随" />
 </p>
+内置主题 / 静态图 / **动态 360 跟随视频**，一键换肤，桌面更像「活」的。
 
+### 🧠 记忆核心（[dsh-memory-eternal](https://github.com/EternalNight996/dsh-memory-eternal)）
+<p align="center">
+  <img src="assets/screen/dsh-memory-eternal.png" width="760" alt="记忆核心-知识卡" />
+  <img src="assets/screen/dsh-memory-eternal grap view.png" width="760" alt="记忆核心-知识图谱" />
+</p>
+对话自动沉淀**知识卡**到本地 Markdown Vault（去重 / 检索 / 知识图谱），零人工干预，纯本地。
+
+### 🦾 驯兽师内核（[dsh-ui-three-body](https://github.com/EternalNight996/dsh-ui-three-body)）
+<p align="center">
+  <img src="assets/screen/dsh-ui-three-body setting.png" width="760" alt="驯兽师内核-设置" />
+  <img src="assets/screen/dsh-ui-three-body setting2.png" width="460" alt="驯兽师内核-萌宠开关" />
+</p>
+把「人话」翻译给智能体：第一性原理 + 需求剖析 + 极简沟通 + 最少 token，让智能体更「开智」；左上角萌宠开关，设置面板可配内核档位。
+
+### ⚙️ 自动更新
+<p align="center">
+  <img src="assets/screen/dsh-desktop auto update.png" width="460" alt="设置·自动更新窗口" />
+</p>
 「更新配置」入口已移至 dsh 工作栏底部 **设置** 之前（记忆 → 更新配置 → 设置）。点开即弹出独立**设置·更新配置窗口**：内置桌面壳与 dsh 双更新入口、版本与运行方式一览、随时一键升级。关闭主窗口会最小化到托盘，更新配置常驻托盘与设置窗口。
 
 ## 🚀 三步上手
@@ -92,30 +123,17 @@
 
 > 💡 想要完全离线？下载**离线安装包**（文件名带 `offline`）：Node + WebView2 + dsh 全内置，断网也能装、也能跑。
 
-## 🎨 扩展：插件市场 + 像素办公室
+## 🎨 扩展：插件市场 + 更多插件
 
-桌面壳**不内置**任何插件；推荐先装 **dsh-market 插件市场**，之后所有插件都能在界面里浏览、搜索、一键安装：
+桌面壳**不内置**任何插件；所有插件都用统一 `dsh` 命令安装（桌面壳已把终端 `dsh` 统一到同一份，**零下载，不会重装 dsh**）。想第一个装**插件市场**（界面浏览/搜索/一键安装所有插件）：
 
 ```sh
 dsh plugin add dshmarket
 ```
 
-安装后重启桌面壳，设置页会出现「插件市场」入口（[dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)）。
+安装后重启桌面壳，设置页出现「插件市场」入口（[dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)）。
 
-### 🧑‍💼 像素办公室插件
-
-也可直接装像素办公室插件（255+ 专家角色，The Agency en + agency-agents-zh，29 个预设团队）：
-
-```sh
-dsh plugin add dsh-ui-agents-pixe
-```
-
-安装后重启桌面壳，像素办公室自动出现。
-
-| 仓库 | 地址 |
-|---|---|
-| 🌟 GitHub | [EternalNight996/dsh-ui-agents-pixe](https://github.com/EternalNight996/dsh-ui-agents-pixe) |
-| 🐮 Gitee | [eternalnight996/dsh-ui-agents-pixe](https://gitee.com/eternalnight996/dsh-ui-agents-pixe) |
+**原创插件全家桶**（会动的桌面 / 主题 / 记忆 / 驯兽师内核）见上方「界面预览 · 原创插件全家桶」，`just install-plugins` 一键装齐；也可单独装某个：`dsh plugin --profile web add github:EternalNight996/<仓库名>`。
 
 ## ❓ 常见疑问（大白话版）
 
@@ -213,7 +231,7 @@ Node sidecar（`node-<triple>[.exe]`）+ 内置 dsh + WebView2 离线安装器�
 | dsh 引擎更新 | 手动 npm | 手动 | **✅ 在线后台检查 + 手动一键；离线 `just update-offline` 一键** |
 | 桌面壳自动更新 | ❌ | 手动 | **✅ 启动自检 + 一键更新** |
 | 内置插件（开箱彩蛋） | ❌ 需自装 | ❌ 需自装 | ❌ 需自装（独立插件一键加装） |
-| 像素人角色管理 | ❌ | ❌ | ❌ 需自装（255+ 角色 / 29 团队） |
+| 像素人角色管理 | ❌ | ❌ | ❌ 需自装（508 角色 / 29 团队） |
 | 安装包体积 | — | ~200MB+ | **壳 ~12MB（+运行时）** |
 | 离线零依赖 | ❌ | 部分 | **✅（离线方案）** |
 | 内存占用 | — | 高 | 低 |
