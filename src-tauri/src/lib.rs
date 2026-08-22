@@ -826,6 +826,10 @@ async fn install_app_update(
         .map_err(|e| format!("检查更新失败: {e}"))?
         .ok_or_else(|| "当前已是最新版本".to_string())?;
 
+    // 安装前需要清理后台 node/dsh 进程：NSIS 安装器要替换/关闭运行中的文件，
+    // node 侧车（dsh）若仍在会锁住资源/端口导致安装失败；同时避免安装后复用旧的 dsh。
+    // on_download_finish（第二个回调）在下载完成、install() 执行前触发，正是清理时机。
+    let app_for_kill = app.clone();
     update
         .download_and_install(
             |downloaded, total| {
@@ -838,6 +842,14 @@ async fn install_app_update(
                 );
             },
             || {
+                // 1) 杀掉当前 dsh 子进程树（node sidecar + 其拉起的 dsh 子进程）。
+                if let Some(state) = app_for_kill.try_state::<DshChild>() {
+                    if let Some(child) = state.0.lock().unwrap().take() {
+                        kill_process_tree(child);
+                    }
+                }
+                // 2) 兜底清理任何残留的 dsh web 实例（防孤儿进程占端口/锁文件）。
+                cleanup_stale_dsh();
                 let _ = window.emit("update-ready", ());
             },
         )
