@@ -28,7 +28,7 @@
 >
 > 基于官方 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness) 打包 —— 不 fork、不改源码，官方更新即用。
 
-## ✨ 四个让人「哇哦」的理由
+## ✨ 三个让人「哇哦」的理由
 
 ### 🚀 开箱即用，零门槛
 
@@ -49,7 +49,6 @@
 - 👑 一键**团队编排**：29 个预设团队（研发 / 安全 / AI大模型 / 区块链 / 跨境电商…），角色名配**历史名人**——图灵、霍金、刘慈欣、辛顿，都是你的同事
 - 🔍 每个会话专属办公室，**重启不丢**，状态持久化
 
-
 ## 🖼️ 界面预览
 
 > 📸 全部真实抓屏。顶部 GIF 是全局总览，下面按模块展开细看。
@@ -60,7 +59,6 @@
   <img src="assets/screen/像素办公室角色.png" width="820" alt="像素办公室-工作角色页签" />
   <img src="assets/screen/像素人办公室角色2.png" width="820" alt="像素办公室-办公室浮层" />
 </p>
-
 
 ### 💬 对话主界面
 
@@ -87,9 +85,33 @@
 - **Windows**：双击 `setup.exe` → 一路「下一步」。若弹出 SmartScreen「已阻止运行」→ 点「更多信息」→「仍要运行」（未签名版正常现象）；装完桌面会出现图标。
 - **macOS**：打开 `.dmg` → 把 App 拖进「应用程序」；首次打开提示「无法验证开发者」→ 右键图标 →「打开」。
 - **Linux**：`.deb` 用 `sudo dpkg -i xxx.deb`（或双击）；`.AppImage` 先 `chmod +x` 再运行。
-- **离线版**：选文件名带 `offline` 的安装包，Node/WebView2/dsh 全内置，断网也能装。
 
-> 💡 想要完全离线？下载**离线安装包**：Node + WebView2 + dsh 全内置，断网也能装、也能跑。
+> 💡 想要完全离线？下载**离线安装包**（文件名带 `offline`）：Node + WebView2 + dsh 全内置，断网也能装、也能跑。
+
+## 🎨 扩展：插件市场 + 像素办公室
+
+桌面壳**不内置**任何插件；推荐先装 **dsh-market 插件市场**，之后所有插件都能在界面里浏览、搜索、一键安装：
+
+```sh
+dsh plugin add dshmarket
+```
+
+安装后重启桌面壳，设置页会出现「插件市场」入口（[dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)）。
+
+### 🧑‍💼 像素办公室插件
+
+也可直接装像素办公室插件（255+ 专家角色，The Agency en + agency-agents-zh，29 个预设团队）：
+
+```sh
+dsh plugin add dsh-ui-agents-pixe
+```
+
+安装后重启桌面壳，像素办公室自动出现。
+
+| 仓库 | 地址 |
+|---|---|
+| 🌟 GitHub | [EternalNight996/dsh-ui-agents-pixe](https://github.com/EternalNight996/dsh-ui-agents-pixe) |
+| 🐮 Gitee | [eternalnight996/dsh-ui-agents-pixe](https://gitee.com/eternalnight996/dsh-ui-agents-pixe) |
 
 ## ❓ 常见疑问（大白话版）
 
@@ -159,23 +181,11 @@ A：会摸鱼（下班躺床），但该干活时打字飞快 —— 这才是�
 
 > **离线**模式还会内置 dsh（`@deepseek-ai/dsh`）；**在线**模式首次联网自动安装 dsh 到全局 npm 前缀（`%APPDATA%\npm`，与终端 dsh 命令同源），之后直接用内置 node 启动（无需 npx）；后台只检查版本，发现新版由你点「更新 dsh」手动升级。
 
-#### 离线打包教程（客户零依赖，4 步）
+#### 离线打包（速览）
 
-1. **准备运行时**（下载 node sidecar + 内置 dsh）：
-   ```sh
-   just vendor
-   ```
-2. **出离线安装包**（按平台，任选其一）：
-   ```sh
-   just release-win-offline     # Windows
-   just release-mac-offline     # macOS Apple Silicon
-   just release-linux-offline   # Linux
-   # 或 debug：just dist-offline
-   ```
-3. **原理**：`tauri.offline.json` 把 `@deepseek-ai/dsh` node_modules 打进 resources，并设 `webviewInstallMode: offlineInstaller`——安装器内置 WebView2 离线安装器，**断网可装、断网可跑**。
-4. **客户拿到什么**：一个 `*-setup.exe` 安装包 → 双击 → 装完直接用。不用装 Node、不用联网、不用任何配置。
+Node sidecar（`node-<triple>[.exe]`）+ 内置 dsh + WebView2 离线安装器（`offlineInstaller`，而非默认安装时联网下载的 `downloadBootstrapper`），**断网可装、断网可跑**。
 
-> **离线如何做到**：node sidecar（`node-<triple>[.exe]`）+ 内置 dsh + WebView2 离线安装器（`offlineInstaller`，而非默认安装时联网下载的 `downloadBootstrapper`）。
+> 📖 **完整 4 步离线打包教程见文末「🔧 安装部署教程」的「离线打包教程」**。
 
 ### 跨平台构建
 
@@ -290,12 +300,7 @@ just release-win  # Windows 正式安装包（其他平台见上方「跨平台�
 3. **原理**：`tauri.offline.json` 把 `@deepseek-ai/dsh` node_modules 打进 resources，并设 `webviewInstallMode: offlineInstaller`——安装器内置 WebView2 离线安装器，**断网可装、断网可跑**。
 4. **客户拿到什么**：一个 `*-setup.exe` 安装包 → 双击 → 装完直接用。不用装 Node、不用联网、不用任何配置。
 
-### 普通用户安装贴士
-
-- **Windows**：双击 `setup.exe` → 一路「下一步」。若弹出 SmartScreen「已阻止运行」→ 点「更多信息」→「仍要运行」（未签名版正常现象）；装完桌面会出现图标。
-- **macOS**：打开 `.dmg` → 把 App 拖进「应用程序」；首次打开提示「无法验证开发者」→ 右键图标 →「打开」。
-- **Linux**：`.deb` 用 `sudo dpkg -i xxx.deb`（或双击）；`.AppImage` 先 `chmod +x` 再运行。
-- **离线版**：选文件名带 `offline` 的安装包，Node/WebView2/dsh 全内置，断网也能装。
+> 普通用户的平台安装贴士（SmartScreen / macOS 验证 / AppImage 等）见上方「三步上手」的**安装小贴士**。
 
 ## 🔄 自动更新配置教程（详细版）
 
@@ -307,10 +312,12 @@ just release-win  # Windows 正式安装包（其他平台见上方「跨平台�
 
 本版本针对入口体验做的一轮改善（均已实测）：
 
-- **修复 `just dev` 下点「更新配置」设置窗口空白/卡死**：根因是 `open_settings` 为同步 command，Tauri 在主线程执行，其内部 `run_on_main_thread` 再投递建窗闭包造成主线程自死锁，窗口一直建不出来。改为 **async command**（运行在 async 运行时、非主线程）后，建窗闭包从非主线程正常投递，窗口立即弹出且内容完整。
-- **修复设置窗口版本无法显示**：`capabilities` 只授权了 `main` 窗口，设置窗口（`settings`）没有被授权，导致其所有 `invoke`（读版本、检查更新、升级 dsh 等）被拒。现已把 `settings` 加入 `windows` 白名单，并授权其全部 command 权限（见 `src-tauri/capabilities/default.json` 与 `src-tauri/permissions/workbar.toml`）。实测版本字段正常：桌面壳 `v0.3.1`、dsh `v0.1.1-rc.2`、运行方式「在线（全局安装）」。
-- **设置窗口不因透明白屏**：窗口创建时设了不透明背景色（`#0f172a`）+ 页面 body 明确 `background-color`，避免 WebView2 首帧未即时绘制时显示为空白。
-- **滚动条更优雅**：设置窗口内容超出时才出现滚动条，且为 6px 半透明细滚动条（细、不喧宾夺主，hover 才稍明显）；窗口尺寸固定（460×660，不可拉伸）。
+- **修复 `just dev` 下点「更新配置」设置窗口空白/卡死**：`open_settings` 改为 async command，避免同步 command 在主线程内再投递建窗闭包造成自死锁。
+- **修复设置窗口版本无法显示**：`settings` 窗口加入 capabilities 授权白名单（见 `src-tauri/capabilities/default.json` 与 `src-tauri/permissions/workbar.toml`）。
+- **消除首帧透明白屏**：窗口创建时设不透明背景色（`#0f172a`）+ 页面 body 明确 `background-color`。
+- **细节打磨**：内容超出才显示 6px 半透明细滚动条；窗口尺寸固定 460×660 不可拉伸。
+
+实测版本字段正常：桌面壳 `v0.3.1`、dsh `v0.1.1-rc.2`、运行方式「在线（全局安装）」。
 
 > 说明：更新动作是「**非强制 + 提醒式**」——不会自动静默安装，只在发现新版时弹出「是否立即更新」，用户点确认才下载安装；默认仅**启动时检查一次**（`settings` 里有开关可关闭），不干扰正常使用。dsh 引擎为在线方案，版本随 npm 官方最新，可在设置窗口一键升级。
 
@@ -373,33 +380,6 @@ node scripts/publish-update.mjs --notes "更新说明"
 ## 📄 License
 
 [MIT](LICENSE)
-
----
-
-## 🎨 扩展：插件市场 + 像素办公室
-
-桌面壳**不内置**任何插件；推荐先装 **dsh-market 插件市场**，之后所有插件都能在界面里浏览、搜索、一键安装：
-
-```sh
-dsh plugin add dshmarket
-```
-
-安装后重启桌面壳，设置页会出现「插件市场」入口（[dsh-market/dsh-market](https://github.com/dsh-market/dsh-market)）。
-
-### 🧑‍💼 像素办公室插件
-
-也可直接装像素办公室插件（255+ 专家角色，The Agency en + agency-agents-zh，29 个预设团队）：
-
-```sh
-dsh plugin add dsh-ui-agents-pixe
-```
-
-安装后重启桌面壳，像素办公室自动出现。
-
-| 仓库 | 地址 |
-|---|---|
-| 🌟 GitHub | [EternalNight996/dsh-ui-agents-pixe](https://github.com/EternalNight996/dsh-ui-agents-pixe) |
-| 🐮 Gitee | [eternalnight996/dsh-ui-agents-pixe](https://gitee.com/eternalnight996/dsh-ui-agents-pixe) |
 
 ---
 
