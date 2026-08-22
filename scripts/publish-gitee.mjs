@@ -134,12 +134,21 @@ async function uploadOne(f) {
   }
   return null;
 }
+// Gitee 附件直链回退：Gitee 上传大型安装包经常失败/超时，回退到 GitHub 资产直链
+// （签名仍用本地 .sig，更新器校验的是安装包字节与签名一致性，指向 GitHub 同样有效），
+// 保证 Gitee latest.json 永远有完整 platforms，端用户更新不会缺失平台。
+const ghAssetUrl = (name) =>
+  `https://github.com/${owner}/${repo}/releases/download/${tag}/${encodeURIComponent(name)}`;
 for (const f of files) {
   const name = basename(f);
+  const isInstaller = installerExts.some((e) => name.toLowerCase().endsWith(e));
   const url = await uploadOne(f);
   if (url) {
     downloadUrls[name] = url;
     console.log('已上传', name, '->', url);
+  } else if (isInstaller && !/webview2/i.test(name)) {
+    downloadUrls[name] = ghAssetUrl(name);
+    console.warn('Gitee 上传失败，回退 GitHub 直链:', name, '->', downloadUrls[name]);
   } else {
     console.error('跳过（多次重试仍失败）:', name);
   }
