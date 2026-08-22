@@ -1123,6 +1123,8 @@ fn scan_terminal_dsh() -> DshCliStatus {
 
 /// 运行一段 PowerShell 脚本（无窗口），返回 (成功?, stdout+stderr)。
 /// 通过环境变量 DSH_PREFIX 传参，彻底规避引号转义问题（同 cleanup_stale_dsh 的教训）。
+/// 仅 Windows 使用（powershell.exe + CREATE_NO_WINDOW 均为 Windows 专有），故 cfg(windows)。
+#[cfg(windows)]
 fn run_ps(script: &str, prefix: &str) -> (bool, String) {
     match std::process::Command::new("powershell.exe")
         .creation_flags(CREATE_NO_WINDOW)
