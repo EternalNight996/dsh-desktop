@@ -89,9 +89,11 @@ $palette = Join-Path $screenDir "_tmp\palette.png"
 $gifTmp = Join-Path $screenDir "_tmp\dsh-desktop.gif"
 if (Test-Path $gif) {
   if (-not $DryRun) {
-    $rc1 = Run-FFmpeg @("-y", "-loglevel", "error", "-i", $gif, "-vf", "scale=720:-2:flags=lanczos,fps=12,palettegen=max_colors=64:stats_mode=diff", $palette)
+    # 420 wide, 9 fps, 52 colors, bayer dither: optimal balance for desktop-screenshot demo GIF.
+    # Source is 720x388 @ 16.67 fps; lower fps + smaller width + tighter palette drops ~55%.
+    $rc1 = Run-FFmpeg @("-y", "-loglevel", "error", "-i", $gif, "-vf", "scale=420:-2:flags=lanczos,fps=9,split[s0][s1];[s0]palettegen=max_colors=52[p];[s1][p]paletteuse=dither=bayer:bayer_scale=5", $palette)
     if ($rc1 -eq 0) {
-      $rc2 = Run-FFmpeg @("-y", "-loglevel", "error", "-i", $gif, "-i", $palette, "-filter_complex", "scale=720:-2:flags=lanczos,fps=12,paletteuse=dither=sierra2_4a:diff_mode=rectangle", "-loop", "0", $gifTmp)
+      $rc2 = Run-FFmpeg @("-y", "-loglevel", "error", "-i", $gif, "-i", $palette, "-filter_complex", "scale=420:-2:flags=lanczos,fps=9,paletteuse=dither=bayer:bayer_scale=5", "-loop", "0", $gifTmp)
       if ($rc2 -eq 0) {
         Move-Item -Force $gifTmp $gif
         Remove-Item $palette -ErrorAction SilentlyContinue
