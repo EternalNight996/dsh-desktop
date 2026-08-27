@@ -13,7 +13,11 @@
     "allow-update-online-dsh",
     "allow-get-dsh-version",
     "allow-update-prompt-pref",
-    "allow-auto-check-pref"
+    "allow-auto-check-pref",
+    "allow-get-boot-state",
+    "allow-retry-dsh-start",
+    "allow-report-client-error",
+    "allow-remove-plugin-bundles"
   ],
   "remote": {
     "urls": ["http://127.0.0.1:5399/*", "http://localhost:*/"]

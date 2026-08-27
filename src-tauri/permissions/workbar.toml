@@ -48,3 +48,25 @@ commands.allow = ["get_update_prompt_pref", "set_update_prompt_pref"]
 identifier = "allow-auto-check-pref"
 description = "Allows getting/setting the auto-check update switch."
 commands.allow = ["get_auto_check", "set_auto_check"]
+
+# ===== 加载页（启动/错误态）需要的 command 权限 =====
+
+[[permission]]
+identifier = "allow-get-boot-state"
+description = "Allows the loading page to poll the dsh boot state."
+commands.allow = ["get_boot_state"]
+
+[[permission]]
+identifier = "allow-retry-dsh-start"
+description = "Allows the loading page to retry starting dsh after an error."
+commands.allow = ["retry_dsh_start"]
+
+[[permission]]
+identifier = "allow-report-client-error"
+description = "Allows the client-side module error watchdog to trigger a shell-side restart."
+commands.allow = ["report_client_error"]
+
+[[permission]]
+identifier = "allow-remove-plugin-bundles"
+description = "Allows removing broken plugin entries from dsh profile bundles and restarting."
+commands.allow = ["remove_plugin_bundles"]

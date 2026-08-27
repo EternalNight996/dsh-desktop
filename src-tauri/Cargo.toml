@@ -1,6 +1,6 @@
 [package]
 name = "dsh-desktop"
-version = "0.4.3"
+version = "0.5.0"
 description = "Self-contained desktop shell for DeepSeek Harness (dsh): bundles a Node sidecar, auto-starts dsh and loads its Web UI"
 authors = ["EternalNight <eternalnightyeah2@yeah.net>"]
 edition = "2021"

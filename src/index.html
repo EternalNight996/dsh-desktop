@@ -63,14 +63,136 @@
         0% { transform: translateX(-110%); }
         100% { transform: translateX(340%); }
       }
+      /* 错误态（崩溃原因 + 重试）：等宽小字号贴合日志阅读 */
+      #errbox {
+        margin-top: 22px;
+        max-width: 560px;
+        max-height: 240px;
+        overflow: auto;
+        padding: 12px 14px;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 10px;
+        background: rgba(2, 6, 23, 0.55);
+        color: var(--muted);
+        font: 11px/1.6 ui-monospace, Consolas, monospace;
+        text-align: left;
+        white-space: pre-wrap;
+        word-break: break-all;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      #retry {
+        margin-top: 14px;
+        padding: 8px 22px;
+        border: 1px solid rgba(14, 165, 233, 0.45);
+        border-radius: 999px;
+        background: rgba(14, 165, 233, 0.12);
+        color: var(--text);
+        font: 600 13px/1 inherit;
+        letter-spacing: 0.3px;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      }
+      #retry:hover { background: rgba(14, 165, 233, 0.28); }
+      /* 自动修复（移除问题插件）：强调色，主要操作 */
+      #repair {
+        margin-top: 10px;
+        padding: 8px 22px;
+        border: 1px solid rgba(234, 179, 8, 0.5);
+        border-radius: 999px;
+        background: rgba(234, 179, 8, 0.12);
+        color: var(--text);
+        font: 600 13px/1 inherit;
+        letter-spacing: 0.3px;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+      }
+      #repair:hover { background: rgba(234, 179, 8, 0.28); }
+      #repair:disabled { opacity: 0.5; cursor: not-allowed; }
     </style>
   </head>
   <body>
     <div class="box">
       <img class="logo" src="logo.svg" alt="DeepSeek Harness" draggable="false" />
       <h1>DeepSeek Harness Desktop</h1>
-      <p class="sub">正在启动本地服务，请稍候…</p>
-      <div class="bar"><i></i></div>
+      <p class="sub" id="sub">正在启动本地服务，请稍候…</p>
+      <div class="bar" id="bar"><i></i></div>
+      <!-- 错误态：看门狗救不活时显示崩溃原因（多为插件加载失败）+ 重试按钮 -->
+      <pre id="errbox" hidden></pre>
+      <button id="repair" type="button" hidden>🔧 自动修复</button>
+      <button id="retry" type="button" hidden>重试</button>
     </div>
+    <script>
+      (function () {
+        // 轮询后端启动状态：成功时窗口被导航去 dsh UI（本页卸载，轮询自然终止）；
+        // 错误态时显示原因与重试按钮。原因用 textContent 渲染，无注入面。
+        var sub = document.getElementById('sub');
+        var bar = document.getElementById('bar');
+        var errbox = document.getElementById('errbox');
+        var retry = document.getElementById('retry');
+        var repair = document.getElementById('repair');
+        // 从错误文本中提取问题插件名（dsh fail-loud 的已知格式）。
+        function extractPluginNames(text) {
+          if (!text) return [];
+          var names = [];
+          var re1 = /cannot resolve profile bundle "([^"]+)"/g;
+          var re2 = /entries did not activate[\s\S]*?([a-z0-9@\/_.-]+):/g;
+          var re3 = /plugin\(s\) failed to load: ([^\n;]+)/g;
+          var m;
+          while ((m = re1.exec(text))) names.push(m[1]);
+          if (!names.length) while ((m = re2.exec(text))) names.push(m[1]);
+          if (!names.length) {
+            while ((m = re3.exec(text))) {
+              m[1].split(',').forEach(function (p) { p = p.trim(); if (p) names.push(p); });
+            }
+          }
+          return names.length ? names : null;
+        }
+        var foundPlugins = null;
+        var invoke = function (cmd, args) {
+          try { return window.__TAURI_INTERNALS__.invoke(cmd, args || {}); }
+          catch (e) { return Promise.reject(e); }
+        };
+        var shown = false;
+        function poll() {
+          invoke('get_boot_state').then(function (st) {
+            if (st && st.status === 'error' && st.error && !shown) {
+              shown = true;
+              sub.textContent = '本地服务启动失败';
+              bar.hidden = true;
+              errbox.textContent = st.error;
+              errbox.hidden = false;
+              foundPlugins = extractPluginNames(st.error);
+              repair.hidden = !foundPlugins;
+              if (foundPlugins) repair.disabled = false;
+              retry.hidden = false;
+            }
+          }).catch(function () {}).finally(function () {
+            if (!shown) setTimeout(poll, 800);
+          });
+        }
+        retry.addEventListener('click', function () {
+          shown = false; foundPlugins = null;
+          retry.hidden = true; repair.hidden = true;
+          errbox.hidden = true; bar.hidden = false;
+          sub.textContent = '正在启动本地服务，请稍候…';
+          invoke('retry_dsh_start').catch(function () {});
+          poll();
+        });
+        repair.addEventListener('click', function () {
+          if (!foundPlugins) return;
+          repair.disabled = true;
+          sub.textContent = '正在移除问题插件并重启…';
+          invoke('remove_plugin_bundles', { plugins: foundPlugins }).catch(function () {}).finally(function () {
+            shown = false; foundPlugins = null;
+            repair.hidden = true; retry.hidden = true;
+            errbox.hidden = true; bar.hidden = false;
+            sub.textContent = '正在启动本地服务，请稍候…';
+            poll();
+          });
+        });
+        poll();
+      })();
+    </script>
   </body>
 </html>

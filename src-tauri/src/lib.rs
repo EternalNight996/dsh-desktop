@@ -11,9 +11,10 @@
 //! 跨平台：Windows / macOS / Linux，差异仅在 sidecar 二进制与系统 WebView。
 
 
-use std::net::{TcpListener, TcpStream};
+use std::collections::VecDeque;
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,38 @@ use tauri_plugin_updater::UpdaterExt;
 /// 供 `spawn_dsh` 的重复注入循环判断停止（避免固定 sleep 造成的额外等待）。
 static WORKBAR_INJECTED: AtomicBool = AtomicBool::new(false);
 
+// ===== dsh 看门狗状态 =====
+// dsh 上游对插件是 fail-loud 设计：任一 bundle 导入/激活失败整个进程 exit(1)。
+// 桌面壳据此做自愈：崩溃→退避重启；连续快速崩溃→停止重启，加载页显示原因。
+
+/// 桌面壳代数：每次拉起新 dsh 或主动杀 dsh 前递增。事件消费线程以
+///「自己持有的代数 == 当前代数」区分「自己看护的进程意外退出（崩溃，需自愈）」
+/// 与「过期事件流（主动杀/已被新实例替换，忽略）」。
+static DSH_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// 连续快速崩溃计数（稳定运行满 5 分钟自动归零；≥3 次停止自动重启转错误页）。
+static DSH_CRASHES: AtomicUsize = AtomicUsize::new(0);
+/// 当前 dsh 就绪时刻（用于「稳定运行」判定，崩溃间隔大于它即视为偶发）。
+static DSH_READY_AT: Mutex<Option<Instant>> = Mutex::new(None);
+/// 最近日志尾（stdout+stderr 各保留若干行），崩溃时截末尾作为诊断文本。
+static DSH_LOG_TAIL: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
+/// 错误态文本：Some(原因) = 处于错误态（加载页据此渲染原因与重试按钮）。
+static DSH_ERROR: Mutex<Option<String>> = Mutex::new(None);
+/// 主窗口初始加载页 URL（进入错误态时导航回此页）。
+static LOADER_URL: Mutex<Option<String>> = Mutex::new(None);
+
+/// 稳定运行阈值：dsh 存活满此时长后崩溃计数归零（视为新一轮偶发故障）。
+const STABLE_UPTIME: Duration = Duration::from_secs(300);
+/// 连续崩溃 ≥ 此值停止自动重启，转错误页等用户重试。
+const MAX_CRASHES: usize = 3;
+/// 崩溃退避序列：第 1/2/3 次崩溃后分别等 1s/5s/30s 再重启。
+const CRASH_BACKOFFS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(5),
+    Duration::from_secs(30),
+];
+/// 日志尾容量（行数）。
+const LOG_TAIL_LINES: usize = 60;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -42,8 +75,15 @@ const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 const READY_TIMEOUT: Duration = Duration::from_secs(300);
 /// 就绪探测轮询间隔。
 const POLL_INTERVAL: Duration = Duration::from_millis(200);
-/// dsh Web UI 固定端口：保持 origin（127.0.0.1:<port>）跨重启稳定，localStorage 才能持久（否则随机端口导致 origin 每次变化、localStorage 被清空）。
-const DSH_PORT: u16 = 5399;
+/// dsh Web UI 固定端口：保持 origin（127.0.0.1:<port>）跨重启稳定，localStorage 才能持久
+/// （否则随机端口导致 origin 每次变化、localStorage 被清空）。
+/// 可用环境变量 `DSH_PORT` 覆盖（仅供隔离测试，不改产品默认行为）。
+fn dsh_port() -> u16 {
+    std::env::var("DSH_PORT")
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(5399)
+}
 
 /// 持有 dsh 子进程句柄，退出时统一 kill。
 struct DshChild(Mutex<Option<CommandChild>>);
@@ -62,6 +102,48 @@ fn kill_process_tree(child: CommandChild) {
     {
         let _ = child.kill();
     }
+}
+
+/// 主动杀当前 dsh（更新安装/在线升级/退出时调用）：先递增代数再看护规则杀进程。
+/// 代数递增使旧事件消费线程把随后的 Terminated 视为「过期事件」而非崩溃，
+/// 避免看门狗把主动杀误判成崩溃而与更新流程打架。
+fn kill_dsh_intentionally(app: &tauri::AppHandle) {
+    DSH_GENERATION.fetch_add(1, Ordering::Relaxed);
+    if let Some(state) = app.try_state::<DshChild>() {
+        if let Some(child) = state.0.lock().unwrap().take() {
+            kill_process_tree(child);
+        }
+    }
+}
+
+/// 进入错误态：记录原因并把主窗口导航回加载页（加载页据此显示原因 + 重试）。
+/// reason 用 textContent 渲染，不经 innerHTML，无注入面。
+fn enter_error_state(app: &tauri::AppHandle, reason: String) {
+    eprintln!("[dsh-desktop] 进入错误态: {reason}");
+    *DSH_ERROR.lock().unwrap() = Some(reason);
+    if let Some(win) = app.get_webview_window("main") {
+        if let Some(u) = LOADER_URL.lock().unwrap().clone() {
+            if let Ok(parsed) = url::Url::parse(&u) {
+                let _ = win.navigate(parsed);
+            }
+        }
+    }
+}
+
+/// 追加一行日志到尾部环形缓冲。
+fn push_log_tail(line: &str) {
+    let mut tail = DSH_LOG_TAIL.lock().unwrap();
+    tail.push_back(line.to_string());
+    while tail.len() > LOG_TAIL_LINES {
+        tail.pop_front();
+    }
+}
+
+/// 取日志末尾若干行（崩溃诊断文本）。
+fn take_log_tail(lines: usize) -> String {
+    let tail = DSH_LOG_TAIL.lock().unwrap();
+    let start = tail.len().saturating_sub(lines);
+    tail.iter().skip(start).cloned().collect::<Vec<_>>().join("\n")
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -83,9 +165,19 @@ pub fn run() {
             open_settings,
             log_workbar_inject,
             get_dsh_cli_status,
-            unify_dsh_cli
+            unify_dsh_cli,
+            get_boot_state,
+            retry_dsh_start,
+            report_client_error,
+            remove_plugin_bundles
         ])
         .setup(|app| {
+            // 记录主窗口初始加载页 URL：进入错误态时导航回此页显示原因。
+            if let Some(win) = app.get_webview_window("main") {
+                if let Ok(u) = win.url() {
+                    *LOADER_URL.lock().unwrap() = Some(u.to_string());
+                }
+            }
             // 托盘图标：主窗口被 dsh UI 占据后，更新/设置入口常驻系统托盘。
             if let Err(e) = build_tray(app) {
                 eprintln!("[dsh-desktop] 创建托盘失败: {e}");
@@ -117,12 +209,9 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             // 应用退出时回收 dsh 子进程，避免残留后台进程。
+            // 走 kill_dsh_intentionally：递增代数，防看门狗在退出竞态窗口里重启 dsh。
             if let RunEvent::Exit = event {
-                if let Some(state) = app_handle.try_state::<DshChild>() {
-                    if let Some(child) = state.0.lock().unwrap().take() {
-                        kill_process_tree(child);
-                    }
-                }
+                kill_dsh_intentionally(app_handle);
             }
         });
 }
@@ -192,13 +281,32 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     open_settings_window(&app).map_err(|e| format!("打开设置窗口失败: {e}"))
 }
 
-/// 供工作栏注入脚本回传诊断（是否找到工作栏/设置按钮、是否插入成功），打印到桌面壳日志。
+/// 供注入脚本回传诊断，打印到桌面壳日志。
+/// 「已插入」→ 置位工作栏标志，停止注入循环。
 #[tauri::command]
 fn log_workbar_inject(message: String) {
-    eprintln!("[dsh-desktop] 工作栏注入: {message}");
+    eprintln!("[dsh-desktop] 注入: {message}");
     if message.contains("已插入") {
         WORKBAR_INJECTED.store(true, Ordering::Relaxed);
     }
+}
+
+/// 客户端模块加载失败回调：注入脚本检测到 SPA 模块 import 失败后调用。
+/// async command 拿到 AppHandle，走与进程崩溃相同的看门狗路径。
+#[tauri::command]
+async fn report_client_error(app: tauri::AppHandle, message: String) {
+    eprintln!("[dsh-desktop] 客户端模块加载失败: {message}");
+    let n = DSH_CRASHES.fetch_add(1, Ordering::Relaxed) + 1;
+    if n >= MAX_CRASHES {
+        enter_error_state(&app, format!("dsh 插件模块加载失败（客户端侧，连续 {n} 次）：\n{message}\n\n修复或移除问题插件后点「重试」。"));
+        return;
+    }
+    let backoff = CRASH_BACKOFFS[n.min(CRASH_BACKOFFS.len()) - 1];
+    eprintln!("[dsh-desktop] {backoff:?} 后重启 dsh…");
+    // 先杀掉活着但页面已坏的 dsh（主动杀，代数递增）。
+    kill_dsh_intentionally(&app);
+    std::thread::sleep(backoff);
+    spawn_dsh(&app);
 }
 
 /// 注入到 dsh Web UI 的脚本：等待其底部工作栏（launcher）渲染后，找到「设置」按钮，
@@ -256,9 +364,17 @@ const DSH_WORKBAR_INJECT_JS: &str = r#"
     btn.setAttribute('type', 'button');
     btn.setAttribute('title', '更新配置：检查并更新 dsh 与 dsh-desktop');
     btn.style.cssText =
-      'all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:4px;' +
+      'all:unset;cursor:pointer;display:flex;align-items:center;gap:4px;' +
       'padding:5px 9px;margin-left:4px;border-radius:8px;vertical-align:middle;' +
-      'font:500 12px/1 inherit;color:inherit;';
+      'font:500 12px/1 inherit;color:inherit;width:100%;box-sizing:border-box;' +
+      'background:transparent;transition:background-color 0.2s ease;';
+    // 悬浮效果
+    btn.addEventListener('mouseenter', function () {
+      btn.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+    });
+    btn.addEventListener('mouseleave', function () {
+      btn.style.backgroundColor = 'transparent';
+    });
     // 刷新图标（内联 SVG，可随大小缩放、颜色继承）
     const ic = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     ic.setAttribute('width', '15');
@@ -327,6 +443,56 @@ const DSH_WORKBAR_INJECT_JS: &str = r#"
 fn inject_workbar_button(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.eval(DSH_WORKBAR_INJECT_JS);
+    }
+}
+
+/// 注入客户端错误检测脚本：SPA 模块加载失败（Vite 预加载 import 失败、dsh fail-loud 的
+/// 客户端侧表现）时通知桌面壳触发看门狗。脚本幂等（window 标志防重入）。
+const DSH_CLIENT_ERROR_DETECT_JS: &str = r#"
+(function () {
+  if (window.__dshClientErrorWatched__) return;
+  window.__dshClientErrorWatched__ = true;
+  function log(msg) {
+    try {
+      if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+        window.__TAURI_INTERNALS__.invoke('log_workbar_inject', { message: String(msg) });
+      }
+    } catch (_) {}
+  }
+  function report(reason) {
+    if (window.__dshClientErrorReported__) return;
+    window.__dshClientErrorReported__ = true;
+    log('客户端模块加载失败: ' + reason);
+    try {
+      if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+        window.__TAURI_INTERNALS__.invoke('report_client_error', { message: String(reason) });
+      }
+    } catch (_) {}
+  }
+  window.addEventListener('unhandledrejection', function (e) {
+    var m = (e.reason && e.reason.message) || String(e.reason || '');
+    if (/bundle script.*failed to load|Failed to fetch dynamically imported module/i.test(m)) report(m);
+  });
+  window.addEventListener('error', function (e) {
+    var m = e.message || '';
+    if (/bundle script.*failed to load|Failed to dynamically import|Loading chunk.*failed/i.test(m)) report(m);
+  });
+  setInterval(function () {
+    if (window.__dshClientErrorReported__) return;
+    try {
+      var entries = Array.from(window.__dsh_loader_entries && window.__dsh_loader_entries() || []);
+      var failed = entries.filter(function (e) { return e.fiber && e.fiber.state === 3 && !e.disabled; });
+      if (failed.length > 0) {
+        report(failed.map(function (e) { return (e.options && e.options.name) || 'unknown'; }).join(', '));
+      }
+    } catch (_) {}
+  }, 1000);
+})();
+"#;
+
+fn inject_client_error_watchdog(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.eval(DSH_CLIENT_ERROR_DETECT_JS);
     }
 }
 
@@ -457,13 +623,23 @@ fn spawn_dsh(app: &tauri::AppHandle) {
                         while Instant::now() < deadline {
                             if WORKBAR_INJECTED.load(Ordering::Relaxed) { break; }
                             inject_workbar_button(&wh);
+                            inject_client_error_watchdog(&wh);
                             std::thread::sleep(Duration::from_millis(1000));
                         }
                     });
                 }
             }
         }
-        None => eprintln!("[dsh-desktop] 启动 dsh 失败，停留在加载页"),
+        None => {
+            // 启动失败：start_dsh 的超时路径已自行进入错误态，此处兜底覆盖「拉起即失败」。
+            if DSH_ERROR.lock().unwrap().is_none() {
+                let tail = take_log_tail(LOG_TAIL_LINES);
+                enter_error_state(
+                    &handle,
+                    format!("dsh 启动失败（未能拉起服务）。可能原因：全局 dsh 安装损坏、插件解析失败、Node 运行时异常。\n\n最近日志：\n{tail}"),
+                );
+            }
+        }
     });
 }
 
@@ -471,14 +647,15 @@ fn spawn_dsh(app: &tauri::AppHandle) {
 fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
     // 0. 复用优先：若固定端口已有 dsh 服务在跑（说明桌面壳上次未回收、服务常驻后台），
     //    直接复用，不清理、不重拉，秒开不重载。
-    if wait_ready(DSH_PORT, Duration::from_secs(1)) {
-        eprintln!("[dsh-desktop] 复用已在后台运行的 dsh（{}）", DSH_PORT);
-        return Some(format!("http://127.0.0.1:{DSH_PORT}"));
+    let port_fixed = dsh_port();
+    if wait_ready(port_fixed, Duration::from_secs(1)) {
+        eprintln!("[dsh-desktop] 复用已在后台运行的 dsh（{port_fixed}）");
+        return Some(format!("http://127.0.0.1:{port_fixed}"));
     }
     // 否则清理历史残留的 dsh web 实例，保证单实例运行。
     cleanup_stale_dsh();
     // 1. 优先用固定端口（保持 localStorage origin 稳定），被占用才退回随机空闲端口。
-    let port = if port_free(DSH_PORT) { DSH_PORT } else { find_free_port()? };
+    let port = if port_free(port_fixed) { port_fixed } else { find_free_port()? };
     let port_arg = port.to_string();
 
     let resource_dir = app.path().resource_dir().ok()?;
@@ -524,45 +701,169 @@ fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
         *state.0.lock().unwrap() = Some(child);
     }
 
-    // 后台消费事件流，避免 stdout 管道满导致 dsh 阻塞。
-    std::thread::spawn(move || {
-        while let Some(event) = rx.blocking_recv() {
-            match event {
-                CommandEvent::Stdout(bytes) => {
-                    if let Ok(line) = String::from_utf8(bytes) {
-                        let line = line.trim();
-                        if !line.is_empty() {
-                            eprintln!("[dsh:out] {line}");
+    // 看门狗代数：本线程看护这一代 dsh。之后任何主动杀/新拉起都会递增全局代数，
+    // 使本线程随后收到的 Terminated 被视为「过期事件」而非崩溃（防看门狗与更新流程打架）。
+    let generation = DSH_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
+    DSH_LOG_TAIL.lock().unwrap().clear();
+    eprintln!("[dsh-desktop] 已拉起 dsh（第 {generation} 代，端口 {port}）");
+
+    // 后台消费事件流，避免 stdout 管道满导致 dsh 阻塞；
+    // Terminated（意外退出且代数仍当前）→ 崩溃自愈：退避重启或 3 连崩转错误态。
+    {
+        let app2 = app.clone();
+        std::thread::spawn(move || {
+            while let Some(event) = rx.blocking_recv() {
+                match event {
+                    CommandEvent::Stdout(bytes) => {
+                        if let Ok(line) = String::from_utf8(bytes) {
+                            let line = line.trim();
+                            if !line.is_empty() {
+                                eprintln!("[dsh:out] {line}");
+                                push_log_tail(line);
+                            }
                         }
                     }
-                }
-                CommandEvent::Stderr(bytes) => {
-                    if let Ok(line) = String::from_utf8(bytes) {
-                        let line = line.trim();
-                        if !line.is_empty() {
-                            eprintln!("[dsh:err] {line}");
+                    CommandEvent::Stderr(bytes) => {
+                        if let Ok(line) = String::from_utf8(bytes) {
+                            let line = line.trim();
+                            if !line.is_empty() {
+                                eprintln!("[dsh:err] {line}");
+                                push_log_tail(line);
+                            }
                         }
                     }
+                    CommandEvent::Terminated(payload) => {
+                        let still_current = generation == DSH_GENERATION.load(Ordering::Relaxed);
+                        if still_current {
+                            handle_dsh_crash(&app2, payload.code);
+                        } else {
+                            eprintln!(
+                                "[dsh-desktop] 忽略过期 dsh 退出事件（第 {generation} 代，主动杀/已替换）"
+                            );
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
-    });
+        });
+    }
 
     // 4. 等待本地服务就绪。
     let url = format!("http://127.0.0.1:{port}");
     if wait_ready(port, READY_TIMEOUT) {
+        *DSH_READY_AT.lock().unwrap() = Some(Instant::now());
         Some(url)
     } else {
         eprintln!("[dsh-desktop] dsh 启动超时（端口 {port}）");
-        // 超时回收：杀掉已启动但没就绪的 dsh，避免残留占用端口
-        if let Some(state) = app.try_state::<DshChild>() {
-            if let Some(child) = state.0.lock().unwrap().take() {
-                kill_process_tree(child);
-            }
-        }
+        // 超时回收：杀掉已启动但没就绪的 dsh，避免残留占用端口。
+        kill_dsh_intentionally(app);
+        enter_error_state(
+            app,
+            format!("dsh 启动超时（>{READY_TIMEOUT:?}，端口 {port}）。可能原因：插件安装损坏、Node 运行时异常。\n\n最近日志：\n{}", take_log_tail(LOG_TAIL_LINES)),
+        );
         None
     }
+}
+
+/// dsh 意外退出（看门狗判定为崩溃）的处理：退避重启；连续 3 次快速崩溃转错误态。
+fn handle_dsh_crash(app: &tauri::AppHandle, code: Option<i32>) {
+    let stable = DSH_READY_AT
+        .lock().unwrap()
+        .map(|at| at.elapsed() >= STABLE_UPTIME)
+        .unwrap_or(false);
+    if stable {
+        // 上一代稳定运行过：视为新一轮偶发故障，计数从 1 重新开始。
+        DSH_CRASHES.store(1, Ordering::Relaxed);
+    } else {
+        DSH_CRASHES.fetch_add(1, Ordering::Relaxed);
+    }
+    let n = DSH_CRASHES.load(Ordering::Relaxed);
+    eprintln!("[dsh-desktop] dsh 意外退出（exit={code:?}），第 {n} 次连续快速崩溃");
+    *DSH_READY_AT.lock().unwrap() = None;
+
+    if n >= MAX_CRASHES {
+        // 崩到救不活：停自动重启，回加载页显示原因（截 stderr 日志尾，常见为
+        // dsh fail-loud 打出的 "fatal load failure" / "did not activate" 插件名）。
+        let tail = take_log_tail(LOG_TAIL_LINES);
+        enter_error_state(
+            app,
+            format!("dsh 连续崩溃 {n} 次，已停止自动重启（退出码 {code:?}）。多为某个插件加载/激活失败（dsh 对插件零容错）。修复或移除问题插件后点「重试」。\n\n最近日志：\n{tail}"),
+        );
+        return;
+    }
+    // 退避后重启。注意：本函数运行在旧事件消费线程，spawn_dsh 会开新线程/新代数，
+    // 代数递增后旧流的后续事件自动失效。
+    let backoff = CRASH_BACKOFFS[n.min(CRASH_BACKOFFS.len()) - 1];
+    eprintln!("[dsh-desktop] {backoff:?} 后自动重启 dsh…");
+    std::thread::sleep(backoff);
+    spawn_dsh(app);
+}
+
+/// 启动状态（加载页轮询）：starting=正在启动；error=错误态（附原因文本）。
+/// 成功时窗口已被导航去 dsh UI，加载页随之卸载，无需 ok 状态。
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+struct BootState {
+    status: String,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn get_boot_state() -> BootState {
+    match DSH_ERROR.lock().unwrap().clone() {
+        Some(error) => BootState { status: "error".into(), error: Some(error) },
+        None => BootState { status: "starting".into(), error: None },
+    }
+}
+
+/// 用户在错误态点「重试」：清错误态与崩溃计数后重新拉起 dsh。
+#[tauri::command]
+fn retry_dsh_start(app: tauri::AppHandle) {
+    eprintln!("[dsh-desktop] 用户触发重试");
+    *DSH_ERROR.lock().unwrap() = None;
+    DSH_CRASHES.store(0, Ordering::Relaxed);
+    spawn_dsh(&app);
+}
+
+/// 从 dsh profile 的 `dsh.profile.bundles` 中移除指定插件条目，然后重启 dsh。
+/// 等效于手工编辑 `~/.dsh/profiles/web/package.json` 去掉坏插件再重启——
+/// dsh 加载 profile 时跳过不在 bundles 里的条目，不再 fail-loud。
+#[tauri::command]
+async fn remove_plugin_bundles(app: tauri::AppHandle, plugins: Vec<String>) -> Result<(), String> {
+    eprintln!("[dsh-desktop] 移除插件: {plugins:?}");
+    // profile web 的 package.json 在 ~/.dsh/profiles/web/。
+    let home = std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .or_else(|_| std::env::var("HOME").map(PathBuf::from))
+        .map_err(|_| "无法定位用户目录".to_string())?;
+    let profile_pkg = home.join(".dsh/profiles/web/package.json");
+    if !profile_pkg.exists() {
+        return Err("profile package.json 不存在".into());
+    }
+    let text = std::fs::read_to_string(&profile_pkg)
+        .map_err(|e| format!("读取 package.json 失败: {e}"))?;
+    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let mut removed = 0usize;
+    for plugin in &plugins {
+        let needle = format!("\"{plugin}\"");
+        let before = lines.len();
+        lines.retain(|line| !line.contains(&needle));
+        if lines.len() < before { removed += 1; }
+    }
+    if removed == 0 {
+        return Err("未在 bundles 中找到指定插件".into());
+    }
+    let new_text = lines.join("\n");
+    std::fs::write(&profile_pkg, &new_text)
+        .map_err(|e| format!("写入 package.json 失败: {e}"))?;
+    eprintln!("[dsh-desktop] 已移除 {removed} 个插件条目，重启 dsh");
+
+    // 重启：走看门狗路径，避免与更新流程打架。
+    kill_dsh_intentionally(&app);
+    DSH_CRASHES.store(0, Ordering::Relaxed);
+    std::thread::sleep(Duration::from_millis(500));
+    spawn_dsh(&app);
+    Ok(())
 }
 
 /// 定位 dsh 入口脚本：环境变量覆盖 → 打包内置 → 无（走在线方案）。
@@ -712,6 +1013,7 @@ fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: 
                     let line = line.trim();
                     if !line.is_empty() {
                         eprintln!("[dsh:install] {line}");
+                        push_log_tail(line);
                     }
                 }
             }
@@ -748,13 +1050,20 @@ fn port_free(port: u16) -> bool {
     TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
 
-/// 轮询探测本地端口，直到可连接或超时。
+/// 轮询探测本地服务，直到 HTTP 200（真探活）或超时。
+/// 只测 TCP 可连不够：进程半死（如插件加载失败后端口仍被占但不再响应）会让
+/// 复用/就绪判定误判，窗口导航过去就是空白。HTTP 200 = Web UI 真正可服务。
 fn wait_ready(port: u16, timeout: Duration) -> bool {
-    let addr = format!("127.0.0.1:{port}");
+    let url = format!("http://127.0.0.1:{port}/");
     let start = Instant::now();
     while start.elapsed() < timeout {
-        if TcpStream::connect(&addr).is_ok() {
-            return true;
+        // TCP 先探一层，避免对未监听端口高频发 HTTP（连接层失败在 Windows 上较慢）。
+        if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
+            if let Ok(resp) = ureq::get(&url).timeout(Duration::from_secs(2)).call() {
+                if resp.status() == 200 {
+                    return true;
+                }
+            }
         }
         std::thread::sleep(POLL_INTERVAL);
     }
@@ -849,11 +1158,8 @@ async fn install_app_update(
             },
             || {
                 // 1) 杀掉当前 dsh 子进程树（node sidecar + 其拉起的 dsh 子进程）。
-                if let Some(state) = app_for_kill.try_state::<DshChild>() {
-                    if let Some(child) = state.0.lock().unwrap().take() {
-                        kill_process_tree(child);
-                    }
-                }
+                //    走主动杀入口（递增代数），防看门狗把这次杀当成崩溃而自动重启、打架。
+                kill_dsh_intentionally(&app_for_kill);
                 // 2) 兜底清理任何残留的 dsh web 实例（防孤儿进程占端口/锁文件）。
                 cleanup_stale_dsh();
                 let _ = window.emit("update-ready", ());
@@ -1010,12 +1316,8 @@ async fn update_online_dsh(app: tauri::AppHandle) -> Result<String, String> {
         return Err("安装完成但版本校验失败".to_string());
     }
 
-    // 2. 重启 dsh：先停旧进程，再拉起新的。
-    if let Some(state) = app.try_state::<DshChild>() {
-        if let Some(child) = state.0.lock().unwrap().take() {
-            kill_process_tree(child);
-        }
-    }
+    // 2. 重启 dsh：先停旧进程（主动杀，防看门狗误判），再拉起新的。
+    kill_dsh_intentionally(&app);
 
     // 3. 重新拉起 dsh 并切窗口。
     spawn_dsh(&app);
