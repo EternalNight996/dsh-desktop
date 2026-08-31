@@ -1,0 +1,5 @@
+# dsh-desktop 桌面壳客户端插件：把 node 半注册成 loader entry（client 扫描只认
+# loader entries 里的 dsh.client 包）；host 半 apply 为空操作，无配置无服务。
+- insert:
+    - id: dsh-desktop-shell
+      name: dsh-desktop-shell

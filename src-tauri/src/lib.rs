@@ -14,7 +14,7 @@
 use std::collections::VecDeque;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -25,10 +25,6 @@ use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
-
-/// DSH 设置页左侧栏「更新设置」入口是否已成功注入。注入脚本成功时会经 `log_workbar_inject` 置位，
-/// 供 `spawn_dsh` 的重复注入循环判断停止（避免固定 sleep 造成的额外等待）。
-static WORKBAR_INJECTED: AtomicBool = AtomicBool::new(false);
 
 // ===== dsh 看门狗状态 =====
 // dsh 上游对插件是 fail-loud 设计：任一 bundle 导入/激活失败整个进程 exit(1)。
@@ -281,14 +277,10 @@ async fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
     open_settings_window(&app).map_err(|e| format!("打开设置窗口失败: {e}"))
 }
 
-/// 供注入脚本回传诊断，打印到桌面壳日志。
-/// 「已插入」→ 置位工作栏标志，停止注入循环。
+/// 供注入脚本（客户端错误看门狗）回传诊断，打印到桌面壳日志。
 #[tauri::command]
 fn log_workbar_inject(message: String) {
     eprintln!("[dsh-desktop] 注入: {message}");
-    if message.contains("已插入") {
-        WORKBAR_INJECTED.store(true, Ordering::Relaxed);
-    }
 }
 
 /// 客户端模块加载失败回调：注入脚本检测到 SPA 模块 import 失败后调用。
@@ -307,157 +299,6 @@ async fn report_client_error(app: tauri::AppHandle, message: String) {
     kill_dsh_intentionally(&app);
     std::thread::sleep(backoff);
     spawn_dsh(&app);
-}
-
-/// 注入到 dsh Web UI 的脚本：等待 DSH 设置页左侧栏（`settings.section` 导航列表）渲染后，
-/// 在列表末尾追加一个固定的「更新设置」入口。点击后打开桌面壳设置窗口（内含分别检查
-/// dsh 与 dsh-desktop 的入口）。
-///
-/// 为什么固定在「设置左侧栏底部」而非插在「设置按钮隔壁」：DSH 设置左侧栏是 `settings.section`
-/// 槽位的导航列表（`nav` → `navList` → 若干 `navCell`，按 `order` 升序排列）。往该列表**末尾
-/// append**（而非用 `insertBefore` 猜邻居）能稳定固定在底部、不随上级元素重渲染而漂移；同时避免
-/// 旧实现用「含『设置』字样」猜锚点被 memory 等插件的「记忆配置」等 section 误命中（正是按钮
-/// 「飘来飘去」的根因）。dsh 的 CSS 类名是 hashed 的，故运行时按可见语义（`role=dialog` 面板内的
-/// `<nav>` / 含多个 section 项的列表容器）自省，而不是硬编码类名。
-const DSH_WORKBAR_INJECT_JS: &str = r#"
-(function () {
-  if (window.__dshSettingsUpdateInjected__) return;
-  window.__dshSettingsUpdateInjected__ = true;
-  function log(msg) {
-    try {
-      if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
-        window.__TAURI_INTERNALS__.invoke('log_workbar_inject', { message: String(msg) });
-      }
-    } catch (_) {}
-  }
-  function norm(s) { return (s || '').toString().toLowerCase().trim(); }
-  // 判断元素是否位于插件浮层内（如像素办公室 agents-pixe-office 之类）：按容器 id / class 标识辨别，
-  // 不能用 position 判定——dsh 主工作栏本身也可能在 absolute 容器里（不能误排）。
-  function inOverlay(el) {
-    let n = el;
-    while (n && n.nodeType === 1) {
-      const id = (n.id || '') + ' ' + (n.className && n.className.toString ? n.className.toString() : '');
-      if (/pixe|office|agents-pixe|overlay/i.test(id)) return true;
-      n = n.parentElement;
-    }
-    return false;
-  }
-  // 判断元素是否属于 DSH 设置面板（role=dialog 且内含 nav 的左侧栏）。只认 dialog 根节点，
-  // 不去猜它嵌套的 section/工作栏——从 dialog 向下定位才是可靠的「设置页左侧栏」。
-  function isSettingsDialog(el) {
-    if (el.nodeType !== 1) return false;
-    const role = norm(el.getAttribute('role'));
-    if (role !== 'dialog') return false;
-    // 设置面板必须内含 <nav>（左侧栏导航）。
-    if (!el.querySelector('nav')) return false;
-    // 排除插件自带的弹窗（如 memory 的 me-modal / 像素办公室等）：它们可能有 nav 但不是 DSH 设置壳。
-    if (inOverlay(el)) return false;
-    // 命中的 dialog 内应能找到一个 nav 列表容器，其中至少一个 section 项是「文本按钮」。
-    return !!(el.querySelector('nav button'));
-  }
-  // 找 DSH 设置页左侧栏的 section 导航列表容器（nav 下的 navList）。
-  // 返回 { list, sample }：list=要 append 的容器；sample=一个现有 section 项（作样式模板）。
-  function findSettingsNavList() {
-    const dialogs = Array.prototype.slice.call(document.querySelectorAll('[role="dialog"]'));
-    for (const dlg of dialogs) {
-      if (!isSettingsDialog(dlg)) continue;
-      const nav = dlg.querySelector('nav');
-      if (!nav) continue;
-      // nav 下的列表容器：取 nav 最后一个直接子元素（DSH 结构 navTitle + navList，navList 在末尾）。
-      let list = null;
-      const kids = Array.prototype.slice.call(nav.children);
-      // 偏好含 section 按钮且非标题的那个子容器。
-      for (const k of kids) { if (k.querySelector('button')) { list = k; break; } }
-      if (!list && kids.length > 0) list = kids[kids.length - 1];
-      if (!list) continue;
-      const sample = list.querySelector('button');
-      return { list, sample };
-    }
-    return null;
-  }
-  // 复用某个现有 section 项的视觉（hash 类名不可硬编码），改文本为「更新设置」，绑定打开更新窗口。
-  function buildUpdateCell(sample) {
-    const btn = sample.cloneNode(false); // 浅克隆：继承 className / 样式，但清掉子节点与事件。
-    // 清掉选中态 / aria（我们不是真正的 section，避免误高亮）。
-    btn.removeAttribute('aria-current');
-    btn.removeAttribute('aria-pressed');
-    btn.classList.remove('active');
-    btn.setAttribute('type', 'button');
-    btn.setAttribute('title', '更新设置：检查并更新 dsh 与 dsh-desktop');
-    // 清空原有子节点，重建「图标 + 文本」。
-    while (btn.firstChild) btn.removeChild(btn.firstChild);
-    // 刷新图标（内联 SVG，可随大小缩放、颜色继承）。
-    const ic = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    ic.setAttribute('width', '18');
-    ic.setAttribute('height', '18');
-    ic.setAttribute('viewBox', '0 0 24 24');
-    ic.setAttribute('fill', 'none');
-    ic.setAttribute('stroke', 'currentColor');
-    ic.setAttribute('stroke-width', '2');
-    ic.setAttribute('stroke-linecap', 'round');
-    ic.setAttribute('stroke-linejoin', 'round');
-    const p1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p1.setAttribute('d', 'M21 2v6h-6');
-    const p2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p2.setAttribute('d', 'M3 12a9 9 0 1 1 15 6.7L21 17');
-    const p3 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    p3.setAttribute('d', 'M3 22v-6h6');
-    ic.appendChild(p1); ic.appendChild(p2); ic.appendChild(p3);
-    // 文本容器：复用 slot 后按钮内的 label 结构（优先找其 className；找不到就建 span）。
-    const label = document.createElement('span');
-    label.textContent = '更新设置';
-    btn.appendChild(ic);
-    btn.appendChild(label);
-    // 点击 → 打开桌面壳更新窗口。
-    btn.addEventListener('click', function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      try {
-        if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
-          window.__TAURI_INTERNALS__.invoke('open_settings');
-        }
-      } catch (_) {}
-    });
-    return btn;
-  }
-  let tries = 0;
-  let mo = null;
-  function tryInject() {
-    if (tries > 150) { log('未能定位 DSH 设置页左侧栏（' + tries + ' 次仍无）'); return; }
-    let nav = null;
-    try { nav = findSettingsNavList(); } catch (_) { return; }
-    if (!nav || !nav.list) return;
-    if (nav.list.querySelector('[title="更新设置：检查并更新 dsh 与 dsh-desktop"]')) return; // 已注入
-    const sample = nav.sample || nav.list.querySelector('button');
-    if (!sample) return;
-    const btn = buildUpdateCell(sample);
-    // append 到列表末尾：固定在设置左侧栏底部，不随上级元素重渲染漂移。
-    nav.list.appendChild(btn);
-    log('「更新设置」已插入（固定到设置页左侧栏底部）');
-    if (mo) { try { mo.disconnect(); } catch (_) {} }
-    clearInterval(poll);
-  }
-  // 首选 MutationObserver：设置页一旦挂载立即注入（比纯轮询更即时）；轮询作兜底。
-  try {
-    mo = new MutationObserver(function () { tryInject(); });
-    mo.observe(document.body, { childList: true, subtree: true });
-  } catch (_) {}
-  // 设置面板是异步渲染（点开才挂载），轮询兜底等待其出现。
-  var poll = setInterval(function () {
-    tries += 1;
-    tryInject();
-    if (tries > 160) { clearInterval(poll); if (mo) { try { mo.disconnect(); } catch (_) {} } }
-  }, 500);
-})();
-"#;
-
-/// 把「更新设置」注入脚本执行到主窗口（dsh UI）。脚本内部自行轮询定位 DSH 设置页左侧栏
-/// `settings.section` 导航列表，在列表末尾追加固定的「更新设置」入口，并把注入/失败结果经
-/// log_workbar_inject 回报到桌面壳日志。
-fn inject_workbar_button(app: &tauri::AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.eval(DSH_WORKBAR_INJECT_JS);
-    }
 }
 
 /// 注入客户端错误检测脚本：SPA 模块加载失败（Vite 预加载 import 失败、dsh fail-loud 的
@@ -616,7 +457,9 @@ fn cleanup_stale_dsh() {
         .status();
 }
 
-/// 后台线程拉起 dsh，就绪后把窗口导航到 dsh Web UI，并注入「更新设置」入口。
+/// 后台线程拉起 dsh，就绪后把窗口导航到 dsh Web UI，并注入客户端错误看门狗。
+/// （「更新设置」入口已改由桌面壳客户端插件 dsh-desktop-shell 经官方槽位挂载，
+/// 不再走 eval 注入——见 ensure_shell_plugin。）
 fn spawn_dsh(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || match start_dsh(&handle) {
@@ -625,18 +468,12 @@ fn spawn_dsh(app: &tauri::AppHandle) {
                 if let Ok(parsed) = url::Url::parse(&url) {
                     let _ = win.navigate(parsed);
                     // dsh 是 SPA，整页导航会替换当前文档；不能在导航前就注入（会被丢弃）。
-                    // 改为重复注入：脚本幂等（window.__dshSettingsUpdateInjected__），只有落在 dsh 文档里
-                    // 才真正生效；一旦 DSH 设置页渲染，注入脚本即用 MutationObserver/轮询定位设置
-                    // 左侧栏并追加「更新设置」，去掉了原先固定的 6 秒 sleep 造成的额外等待。成功即停。
-                    WORKBAR_INJECTED.store(false, Ordering::Relaxed);
+                    // 重复注入：看门狗脚本幂等（window.__dshClientErrorWatched__），只有落在 dsh
+                    // 文档里才真正生效；30s 兜底停止。
                     let wh = handle.clone();
                     std::thread::spawn(move || {
-                        // 重复 eval：脚本用 window 标志幂等，首次命中 dsh 文档即由脚本内部等待
-                        // 设置页挂载后注入；30s 兜底停止。
                         let deadline = Instant::now() + Duration::from_secs(30);
                         while Instant::now() < deadline {
-                            if WORKBAR_INJECTED.load(Ordering::Relaxed) { break; }
-                            inject_workbar_button(&wh);
                             inject_client_error_watchdog(&wh);
                             std::thread::sleep(Duration::from_millis(1000));
                         }
@@ -657,6 +494,113 @@ fn spawn_dsh(app: &tauri::AppHandle) {
     });
 }
 
+/// 桌面壳自带 dsh 客户端插件（resources 内随包分发）：经官方 sidebar.footer.action
+/// 槽位在 DSH 侧边栏底部渲染「更新设置」按钮（memory-eternal 的「记忆」按钮同款机制），
+/// 点击经 Tauri IPC 打开桌面壳设置窗口。
+const SHELL_PLUGIN_NAME: &str = "dsh-desktop-shell";
+
+/// 递归复制目录（安装插件包用；std 无现成递归复制）。
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_recursive(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), &to)?;
+        }
+    }
+    Ok(())
+}
+
+/// 把桌面壳客户端插件安装进 dsh profile（~/.dsh/profiles/web），幂等：
+/// 1) 复制 resources/plugin/dsh-desktop-shell → profile node_modules（版本一致即跳过）；
+/// 2) 在 profile package.json 的 dsh.profile.bundles 登记条目（serde_json 改写，UTF-8 无 BOM）。
+/// dsh 启动时按 bundles 挂载插件：node 半注册 loader entry，client 半由 dsh-client-modules
+/// 扫描 dsh.client 声明后经 /plugins/<id>/client.js 分发进浏览器。
+/// profile 未初始化（dsh 首次运行还没建 profile）时跳过，下次启动自动生效。
+/// 任何失败只记日志，不阻断 dsh 启动。
+fn ensure_shell_plugin(resource_dir: &Path) {
+    let bundled = match resource_dir.join("plugin").join(SHELL_PLUGIN_NAME).canonicalize() {
+        Ok(p) if p.join("package.json").exists() => p,
+        _ => {
+            eprintln!("[dsh-desktop] 未找到内置客户端插件 {SHELL_PLUGIN_NAME}，跳过安装");
+            return;
+        }
+    };
+    let home = match std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .or_else(|_| std::env::var("HOME").map(PathBuf::from))
+    {
+        Ok(h) => h,
+        Err(_) => {
+            eprintln!("[dsh-desktop] 无法定位用户目录，跳过客户端插件安装");
+            return;
+        }
+    };
+    let profile_dir = home.join(".dsh/profiles/web");
+    let profile_pkg = profile_dir.join("package.json");
+    let installed_pkg = profile_dir.join("node_modules").join(SHELL_PLUGIN_NAME).join("package.json");
+    // 版本一致且已登记 bundles → 无需任何写入（避免动运行中 dsh 的文件）。
+    let bundled_version = std::fs::read_to_string(bundled.join("package.json")).ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("version").and_then(|v| v.as_str()).map(String::from));
+    let installed_version = std::fs::read_to_string(&installed_pkg).ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.get("version").and_then(|v| v.as_str()).map(String::from));
+    let already_listed = std::fs::read_to_string(&profile_pkg).ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v.pointer("/dsh/profile/bundles").and_then(|b| b.as_array()).map(|a| {
+            a.iter().filter_map(|x| x.as_str()).any(|s| s == SHELL_PLUGIN_NAME)
+        }))
+        .unwrap_or(false);
+    if already_listed && installed_version.is_some() && installed_version == bundled_version {
+        return;
+    }
+    if !profile_pkg.exists() {
+        eprintln!("[dsh-desktop] dsh profile 尚未初始化（{} 不存在），客户端插件下次启动生效", profile_pkg.display());
+        return;
+    }
+    // 1) 复制插件包（版本变化即重装；文件被运行中的 dsh 锁住时本次跳过，下次生效）。
+    if installed_version != bundled_version {
+        let target = profile_dir.join("node_modules").join(SHELL_PLUGIN_NAME);
+        if let Err(e) = copy_dir_recursive(&bundled, &target) {
+            eprintln!("[dsh-desktop] 客户端插件复制失败（不影响本次启动）: {e}");
+            return;
+        }
+        eprintln!("[dsh-desktop] 客户端插件已安装到 {}", target.display());
+    }
+    // 2) bundles 登记。
+    let text = match std::fs::read_to_string(&profile_pkg) {
+        Ok(t) => t,
+        Err(e) => { eprintln!("[dsh-desktop] 读取 profile package.json 失败: {e}"); return; }
+    };
+    let mut json = match serde_json::from_str::<serde_json::Value>(&text) {
+        Ok(v) => v,
+        Err(e) => { eprintln!("[dsh-desktop] 解析 profile package.json 失败: {e}"); return; }
+    };
+    if let Some(bundles) = json.pointer_mut("/dsh/profile/bundles").and_then(|b| b.as_array_mut()) {
+        if !bundles.iter().filter_map(|x| x.as_str()).any(|s| s == SHELL_PLUGIN_NAME) {
+            bundles.push(serde_json::Value::String(SHELL_PLUGIN_NAME.into()));
+        } else {
+            return; // 已登记且文件已装好，无需写回。
+        }
+    } else {
+        eprintln!("[dsh-desktop] profile package.json 缺少 dsh.profile.bundles，跳过登记");
+        return;
+    }
+    let out = match serde_json::to_string_pretty(&json) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if let Err(e) = std::fs::write(&profile_pkg, out + "\n") {
+        eprintln!("[dsh-desktop] 写回 profile package.json 失败: {e}");
+        return;
+    }
+    eprintln!("[dsh-desktop] 客户端插件 {SHELL_PLUGIN_NAME} 已登记进 profile bundles");
+}
+
 /// 拉起 dsh 并等待就绪，返回可导航的 Web UI 地址。
 fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
     // 0. 复用优先：若固定端口已有 dsh 服务在跑（说明桌面壳上次未回收、服务常驻后台），
@@ -673,6 +617,9 @@ fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
     let port_arg = port.to_string();
 
     let resource_dir = app.path().resource_dir().ok()?;
+
+    // 1.5 桌面壳客户端插件：幂等装入 profile（失败不阻断启动）。
+    ensure_shell_plugin(&resource_dir);
 
     // 2. 决定 dsh 入口：内置 dsh（③ 离线）优先；否则在线方案（②）——
     //    自动跟随 npm 官方最新版，装到全局 npm 前缀（%APPDATA%\npm）后用 node 直接跑
