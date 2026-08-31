@@ -26,7 +26,7 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
 
-/// 工作栏「更新配置」按钮是否已成功注入。注入脚本成功时会经 `log_workbar_inject` 置位，
+/// DSH 设置页左侧栏「更新设置」入口是否已成功注入。注入脚本成功时会经 `log_workbar_inject` 置位，
 /// 供 `spawn_dsh` 的重复注入循环判断停止（避免固定 sleep 造成的额外等待）。
 static WORKBAR_INJECTED: AtomicBool = AtomicBool::new(false);
 
@@ -273,7 +273,7 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
-/// 供 dsh UI 工作栏「更新配置」按钮调用的 command：打开（或聚焦）桌面壳设置窗口。
+/// 供 dsh UI 设置页左侧栏「更新设置」入口调用的 command：打开（或聚焦）桌面壳设置窗口。
 /// async：Tauri async command 运行在 async runtime（非主线程），这样其中再
 /// run_on_main_thread 建窗才能从非主线程正常投递，避免同步主线程 command 里的自死锁。
 #[tauri::command]
@@ -309,14 +309,20 @@ async fn report_client_error(app: tauri::AppHandle, message: String) {
     spawn_dsh(&app);
 }
 
-/// 注入到 dsh Web UI 的脚本：等待其底部工作栏（launcher）渲染后，找到「设置」按钮，
-/// 在其隔壁插入一个「更新配置」按钮；点击后打开桌面壳设置窗口（内含分别检查
-/// dsh 与 dsh-desktop 的入口）。dsh 的 CSS 类名是 hashed 的，故运行时按其可见语义
-/// （aria-label/title/文本）自省工作栏与设置按钮，而不是硬编码类名。
+/// 注入到 dsh Web UI 的脚本：等待 DSH 设置页左侧栏（`settings.section` 导航列表）渲染后，
+/// 在列表末尾追加一个固定的「更新设置」入口。点击后打开桌面壳设置窗口（内含分别检查
+/// dsh 与 dsh-desktop 的入口）。
+///
+/// 为什么固定在「设置左侧栏底部」而非插在「设置按钮隔壁」：DSH 设置左侧栏是 `settings.section`
+/// 槽位的导航列表（`nav` → `navList` → 若干 `navCell`，按 `order` 升序排列）。往该列表**末尾
+/// append**（而非用 `insertBefore` 猜邻居）能稳定固定在底部、不随上级元素重渲染而漂移；同时避免
+/// 旧实现用「含『设置』字样」猜锚点被 memory 等插件的「记忆配置」等 section 误命中（正是按钮
+/// 「飘来飘去」的根因）。dsh 的 CSS 类名是 hashed 的，故运行时按可见语义（`role=dialog` 面板内的
+/// `<nav>` / 含多个 section 项的列表容器）自省，而不是硬编码类名。
 const DSH_WORKBAR_INJECT_JS: &str = r#"
 (function () {
-  if (window.__dshWorkbarInjected__) return;
-  window.__dshWorkbarInjected__ = true;
+  if (window.__dshSettingsUpdateInjected__) return;
+  window.__dshSettingsUpdateInjected__ = true;
   function log(msg) {
     try {
       if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
@@ -325,18 +331,7 @@ const DSH_WORKBAR_INJECT_JS: &str = r#"
     } catch (_) {}
   }
   function norm(s) { return (s || '').toString().toLowerCase().trim(); }
-  // 设置入口：优先精确匹配 title/aria-label 为「设置」（对应工作栏底部 ⚙️ 图标按钮），
-  // 其次文本含「设置」（左侧/其它 tab）。优先命中底部 ⚙️，契合「设置按钮隔壁」。
-  function settingsScore(el) {
-    const title = norm(el.getAttribute('title'));
-    const aria = norm(el.getAttribute('aria-label'));
-    const text = norm(el.textContent);
-    if (title === '设置' || aria === '设置') return 3; // 底部 ⚙️
-    if (/设置/.test(title) || /设置/.test(aria)) return 2;
-    if (/^设置$/.test(text)) return 1; // 文本「设置」
-    return 0;
-  }
-  // 判断按钮是否位于插件浮层内（如像素办公室 agents-pixe-office 之类）：按容器 id / class 标识辨别，
+  // 判断元素是否位于插件浮层内（如像素办公室 agents-pixe-office 之类）：按容器 id / class 标识辨别，
   // 不能用 position 判定——dsh 主工作栏本身也可能在 absolute 容器里（不能误排）。
   function inOverlay(el) {
     let n = el;
@@ -347,38 +342,54 @@ const DSH_WORKBAR_INJECT_JS: &str = r#"
     }
     return false;
   }
-  function findSettingsButton() {
-    const cands = Array.prototype.slice.call(
-      document.querySelectorAll('button, [role="button"], [role="tab"]'),
-    );
-    let best = null, bestScore = 0;
-    for (const el of cands) {
-      if (inOverlay(el)) continue;
-      const s = settingsScore(el);
-      if (s > bestScore) { best = el; bestScore = s; }
-    }
-    return best;
+  // 判断元素是否属于 DSH 设置面板（role=dialog 且内含 nav 的左侧栏）。只认 dialog 根节点，
+  // 不去猜它嵌套的 section/工作栏——从 dialog 向下定位才是可靠的「设置页左侧栏」。
+  function isSettingsDialog(el) {
+    if (el.nodeType !== 1) return false;
+    const role = norm(el.getAttribute('role'));
+    if (role !== 'dialog') return false;
+    // 设置面板必须内含 <nav>（左侧栏导航）。
+    if (!el.querySelector('nav')) return false;
+    // 排除插件自带的弹窗（如 memory 的 me-modal / 像素办公室等）：它们可能有 nav 但不是 DSH 设置壳。
+    if (inOverlay(el)) return false;
+    // 命中的 dialog 内应能找到一个 nav 列表容器，其中至少一个 section 项是「文本按钮」。
+    return !!(el.querySelector('nav button'));
   }
-  function insertBtn(settingBtn) {
-    const btn = document.createElement('button');
+  // 找 DSH 设置页左侧栏的 section 导航列表容器（nav 下的 navList）。
+  // 返回 { list, sample }：list=要 append 的容器；sample=一个现有 section 项（作样式模板）。
+  function findSettingsNavList() {
+    const dialogs = Array.prototype.slice.call(document.querySelectorAll('[role="dialog"]'));
+    for (const dlg of dialogs) {
+      if (!isSettingsDialog(dlg)) continue;
+      const nav = dlg.querySelector('nav');
+      if (!nav) continue;
+      // nav 下的列表容器：取 nav 最后一个直接子元素（DSH 结构 navTitle + navList，navList 在末尾）。
+      let list = null;
+      const kids = Array.prototype.slice.call(nav.children);
+      // 偏好含 section 按钮且非标题的那个子容器。
+      for (const k of kids) { if (k.querySelector('button')) { list = k; break; } }
+      if (!list && kids.length > 0) list = kids[kids.length - 1];
+      if (!list) continue;
+      const sample = list.querySelector('button');
+      return { list, sample };
+    }
+    return null;
+  }
+  // 复用某个现有 section 项的视觉（hash 类名不可硬编码），改文本为「更新设置」，绑定打开更新窗口。
+  function buildUpdateCell(sample) {
+    const btn = sample.cloneNode(false); // 浅克隆：继承 className / 样式，但清掉子节点与事件。
+    // 清掉选中态 / aria（我们不是真正的 section，避免误高亮）。
+    btn.removeAttribute('aria-current');
+    btn.removeAttribute('aria-pressed');
+    btn.classList.remove('active');
     btn.setAttribute('type', 'button');
-    btn.setAttribute('title', '更新配置：检查并更新 dsh 与 dsh-desktop');
-    btn.style.cssText =
-      'all:unset;cursor:pointer;display:flex;align-items:center;gap:4px;' +
-      'padding:5px 9px;margin-left:4px;border-radius:8px;vertical-align:middle;' +
-      'font:500 12px/1 inherit;color:inherit;width:100%;box-sizing:border-box;' +
-      'background:transparent;transition:background-color 0.2s ease;';
-    // 悬浮效果
-    btn.addEventListener('mouseenter', function () {
-      btn.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-    });
-    btn.addEventListener('mouseleave', function () {
-      btn.style.backgroundColor = 'transparent';
-    });
-    // 刷新图标（内联 SVG，可随大小缩放、颜色继承）
+    btn.setAttribute('title', '更新设置：检查并更新 dsh 与 dsh-desktop');
+    // 清空原有子节点，重建「图标 + 文本」。
+    while (btn.firstChild) btn.removeChild(btn.firstChild);
+    // 刷新图标（内联 SVG，可随大小缩放、颜色继承）。
     const ic = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    ic.setAttribute('width', '15');
-    ic.setAttribute('height', '15');
+    ic.setAttribute('width', '18');
+    ic.setAttribute('height', '18');
     ic.setAttribute('viewBox', '0 0 24 24');
     ic.setAttribute('fill', 'none');
     ic.setAttribute('stroke', 'currentColor');
@@ -392,11 +403,12 @@ const DSH_WORKBAR_INJECT_JS: &str = r#"
     const p3 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     p3.setAttribute('d', 'M3 22v-6h6');
     ic.appendChild(p1); ic.appendChild(p2); ic.appendChild(p3);
+    // 文本容器：复用 slot 后按钮内的 label 结构（优先找其 className；找不到就建 span）。
     const label = document.createElement('span');
-    label.textContent = '更新配置';
+    label.textContent = '更新设置';
     btn.appendChild(ic);
     btn.appendChild(label);
-    // 点击直接打开更新配置（设置）窗口。
+    // 点击 → 打开桌面壳更新窗口。
     btn.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
@@ -406,40 +418,42 @@ const DSH_WORKBAR_INJECT_JS: &str = r#"
         }
       } catch (_) {}
     });
-    // 把「更新配置」插到「设置」之前：让底部工作栏显示为 记忆 → 更新配置 → 设置。
-    settingBtn.parentNode.insertBefore(btn, settingBtn);
-    log('更新配置按钮已插入（位于设置入口之前）');
-    return true;
+    return btn;
   }
   let tries = 0;
   let mo = null;
   function tryInject() {
-    if (tries > 120) { log('未能定位工作栏设置按钮（' + tries + ' 次仍无）'); return; }
-    const settingBtn = findSettingsButton();
-    if (!settingBtn) return;
-    if (settingBtn.__dshInjected__) return;
-    settingBtn.__dshInjected__ = true;
-    if (insertBtn(settingBtn)) {
-      if (mo) { try { mo.disconnect(); } catch (_) {} }
-      clearInterval(poll);
-    }
+    if (tries > 150) { log('未能定位 DSH 设置页左侧栏（' + tries + ' 次仍无）'); return; }
+    let nav = null;
+    try { nav = findSettingsNavList(); } catch (_) { return; }
+    if (!nav || !nav.list) return;
+    if (nav.list.querySelector('[title="更新设置：检查并更新 dsh 与 dsh-desktop"]')) return; // 已注入
+    const sample = nav.sample || nav.list.querySelector('button');
+    if (!sample) return;
+    const btn = buildUpdateCell(sample);
+    // append 到列表末尾：固定在设置左侧栏底部，不随上级元素重渲染漂移。
+    nav.list.appendChild(btn);
+    log('「更新设置」已插入（固定到设置页左侧栏底部）');
+    if (mo) { try { mo.disconnect(); } catch (_) {} }
+    clearInterval(poll);
   }
-  // 首选 MutationObserver：dsh 工作栏一旦挂载立即注入（比纯轮询更即时）；轮询作兜底。
+  // 首选 MutationObserver：设置页一旦挂载立即注入（比纯轮询更即时）；轮询作兜底。
   try {
     mo = new MutationObserver(function () { tryInject(); });
     mo.observe(document.body, { childList: true, subtree: true });
   } catch (_) {}
-  // 轮询等待 dsh 工作栏（SPA 异步挂载）渲染。
+  // 设置面板是异步渲染（点开才挂载），轮询兜底等待其出现。
   var poll = setInterval(function () {
     tries += 1;
     tryInject();
-    if (tries > 130) { clearInterval(poll); if (mo) { try { mo.disconnect(); } catch (_) {} } }
+    if (tries > 160) { clearInterval(poll); if (mo) { try { mo.disconnect(); } catch (_) {} } }
   }, 500);
 })();
 "#;
 
-/// 把工作栏注入脚本执行到主窗口（dsh UI）。脚本内部自行轮询定位工作栏 ⚙️ 设置按钮，
-/// 在旁插入「更新配置」按钮，并把插入/失败结果经 log_workbar_inject 回报到桌面壳日志。
+/// 把「更新设置」注入脚本执行到主窗口（dsh UI）。脚本内部自行轮询定位 DSH 设置页左侧栏
+/// `settings.section` 导航列表，在列表末尾追加固定的「更新设置」入口，并把注入/失败结果经
+/// log_workbar_inject 回报到桌面壳日志。
 fn inject_workbar_button(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.eval(DSH_WORKBAR_INJECT_JS);
@@ -602,7 +616,7 @@ fn cleanup_stale_dsh() {
         .status();
 }
 
-/// 后台线程拉起 dsh，就绪后把窗口导航到 dsh Web UI，并注入「检查更新」工作栏按钮。
+/// 后台线程拉起 dsh，就绪后把窗口导航到 dsh Web UI，并注入「更新设置」入口。
 fn spawn_dsh(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || match start_dsh(&handle) {
@@ -611,14 +625,14 @@ fn spawn_dsh(app: &tauri::AppHandle) {
                 if let Ok(parsed) = url::Url::parse(&url) {
                     let _ = win.navigate(parsed);
                     // dsh 是 SPA，整页导航会替换当前文档；不能在导航前就注入（会被丢弃）。
-                    // 改为重复注入：脚本幂等（window.__dshWorkbarInjected__），只有落在 dsh 文档里
-                    // 才真正生效；一旦 dsh 工作栏挂载，注入脚本即用 MutationObserver/轮询立即插入
-                    // 「更新配置」，去掉了原先固定的 6 秒 sleep 造成的额外等待。成功即停。
+                    // 改为重复注入：脚本幂等（window.__dshSettingsUpdateInjected__），只有落在 dsh 文档里
+                    // 才真正生效；一旦 DSH 设置页渲染，注入脚本即用 MutationObserver/轮询定位设置
+                    // 左侧栏并追加「更新设置」，去掉了原先固定的 6 秒 sleep 造成的额外等待。成功即停。
                     WORKBAR_INJECTED.store(false, Ordering::Relaxed);
                     let wh = handle.clone();
                     std::thread::spawn(move || {
                         // 重复 eval：脚本用 window 标志幂等，首次命中 dsh 文档即由脚本内部等待
-                        // 工作栏挂载后注入；30s 兜底停止。
+                        // 设置页挂载后注入；30s 兜底停止。
                         let deadline = Instant::now() + Duration::from_secs(30);
                         while Instant::now() < deadline {
                             if WORKBAR_INJECTED.load(Ordering::Relaxed) { break; }
