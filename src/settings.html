@@ -414,11 +414,19 @@
 
       <div class="card">
         <h2>桌面壳更新</h2>
-        <div class="status" id="app-status">正在检查更新…</div>
-        <div class="actions">
-          <button id="btn-check">更新 desktop</button>
-          <button id="btn-install" class="primary" hidden>立即更新</button>
+        <div class="row"><span>当前版本</span><b id="app-cur">—</b></div>
+        <div class="row"><span>最新版本（GitHub/Gitee）</span><b id="app-latest">—</b></div>
+        <div id="app-version-picker" class="version-picker" hidden>
+          <select id="app-version-select" size="1"></select>
+          <button id="btn-app-install-version" class="primary install-version-btn" hidden>安装所选版本</button>
+          <span id="app-version-stability" class="version-stability s-stable">稳定</span>
         </div>
+        <div class="actions">
+          <button id="btn-check">检查 desktop 更新</button>
+          <button id="btn-install" class="primary" hidden>更新到最新</button>
+        </div>
+        <div class="status" id="app-status"></div>
+        <p class="hint" id="app-hint"></p>
       </div>
 
       <div class="card">
@@ -526,6 +534,13 @@
       function hideUpdatingMask() { updatingMask.classList.remove('show'); }
 
       const appStatusEl = document.getElementById('app-status');
+      const appCurEl = document.getElementById('app-cur');
+      const appLatestEl = document.getElementById('app-latest');
+      const appVersionPicker = document.getElementById('app-version-picker');
+      const appVersionSelect = document.getElementById('app-version-select');
+      const appVersionStability = document.getElementById('app-version-stability');
+      const btnAppInstallVer = document.getElementById('btn-app-install-version');
+      const appHint = document.getElementById('app-hint');
       const dshStatusEl = document.getElementById('dsh-status');
       const btnCheck = document.getElementById('btn-check');
       const btnInstall = document.getElementById('btn-install');
@@ -558,9 +573,11 @@
         setAppStatus('更新配置中…');
         try {
           const info = await tauriCore.invoke('check_app_update');
+          appCurEl.textContent = 'v' + info.current_version;
           if (info.has_update) {
             updateAvailable = true;
             btnInstall.hidden = false;
+            appLatestEl.textContent = 'v' + info.latest_version;
             setAppStatus('发现新版本 v' + info.latest_version + '（当前 v' + info.current_version + '）');
             // 弹出是否更新（勾选过"下次不提醒"的版本不再弹）。
             try {
@@ -569,11 +586,48 @@
             } catch (e) { showUpdateDialog(info); }
           } else {
             btnInstall.hidden = true;
+            appLatestEl.textContent = 'v' + info.latest_version;
             setAppStatus('已是最新版本（v' + info.current_version + '）');
+          }
+          // 列桌面壳全部已发布版本，填充多版本下拉。
+          try {
+            const versions = await tauriCore.invoke('list_app_versions');
+            if (Array.isArray(versions) && versions.length > 0) {
+              renderAppVersionPicker(versions, info.current_version);
+              appHint.textContent = '绿色=稳定 / 黄色=预发布 / ◆蓝色=当前已装；选版本后点「安装所选版本」（下载+签名校验通过才安装）。';
+            } else {
+              appVersionPicker.hidden = true;
+              btnAppInstallVer.hidden = true;
+            }
+          } catch (ev) {
+            appVersionPicker.hidden = true;
+            btnAppInstallVer.hidden = true;
+            appHint.textContent = '无法拉取版本列表：' + ev;
           }
         } catch (e) {
           setAppStatus('检查更新失败：' + e);
         } finally {
+          btnCheck.disabled = false;
+        }
+      }
+
+      async function installAppVersion() {
+        const ver = appVersionSelect.value;
+        if (!ver) return;
+        btnAppInstallVer.disabled = true;
+        btnCheck.disabled = true;
+        showUpdatingMask('正在安装 desktop v' + ver, '请在签名校验通过后按提示安装，期间请勿关闭窗口。', '下载中…');
+        setAppStatus('正在下载并校验 v' + ver + '…');
+        try {
+          await tauriCore.invoke('install_app_version', { version: ver });
+          hideUpdatingMask();
+          appHint.textContent = '安装器已启动（签名校验通过）。安装完成后会自动重启到新版本。';
+          // 之后刷新版本列表（可能装的是旧版本，改回当前）。
+          try { const vs = await tauriCore.invoke('list_app_versions'); const info = await tauriCore.invoke('get_dsh_version').catch(()=>null); } catch (_) {}
+        } catch (e) {
+          hideUpdatingMask();
+          setAppStatus('安装 v' + ver + ' 失败：' + e);
+          btnAppInstallVer.disabled = false;
           btnCheck.disabled = false;
         }
       }
@@ -644,6 +698,45 @@
         syncInstallButtonState(versions[selected]);
         dshVersionPicker.hidden = versions.length === 0;
         btnDshInstallVer.hidden = versions.length === 0;
+      }
+
+      // ---- 桌面壳多版本下拉（同 dsh 模式）----
+      function renderAppVersionPicker(versions, current) {
+        appVersionSelect.innerHTML = '';
+        for (const v of versions) {
+          const opt = document.createElement('option');
+          opt.value = v.version;
+          const currentMark = v.is_current ? '  ★ 当前已装' : '';
+          const kindLabel = v.prerelease ? '（预发布）' : '（稳定）';
+          const prefix = v.is_current ? '◆ ' : '   ';
+          opt.textContent = prefix + 'v' + v.version + kindLabel + currentMark;
+          opt.className = v.prerelease ? 'v-pre' : 'v-stable';
+          if (v.is_current) opt.classList.add('v-current');
+          appVersionSelect.appendChild(opt);
+        }
+        const idx = versions.findIndex((v) => v.is_current);
+        const selected = idx >= 0 ? idx : 0;
+        appVersionSelect.selectedIndex = selected;
+        appUpdateStabilityBadge(versions[selected]);
+        syncAppInstallButtonState(versions[selected]);
+        appVersionPicker.hidden = versions.length === 0;
+        btnAppInstallVer.hidden = versions.length === 0;
+      }
+
+      function appUpdateStabilityBadge(v) {
+        if (!v) {
+          appVersionStability.textContent = '';
+          appVersionStability.className = 'version-stability';
+          return;
+        }
+        appVersionStability.textContent = v.prerelease ? '预发布' : '稳定';
+        appVersionStability.className = 'version-stability ' + (v.prerelease ? 's-pre' : 's-stable');
+      }
+
+      function syncAppInstallButtonState(v) {
+        if (!v) return;
+        btnAppInstallVer.disabled = v.is_current;
+        btnAppInstallVer.textContent = v.is_current ? '当前版本' : '安装所选版本';
       }
 
       function updateStabilityBadge(v) {
@@ -745,7 +838,13 @@
           if (tauriEvent && !window.__dshProgressHooked) {
             await tauriEvent.listen('dsh-install-progress', (ev) => {
               const p = ev.payload || {};
-              applyProgress(p.downloaded || 0, p.total || 0);
+              // 后端对 dsh 安装发 total=0 + downloaded=已下载包数（npm http fetch 计数）。
+              // 用 indeterminate 动画 + 「已下载 N 个依赖」文案，不用字节格式化。
+              updatingMask.dataset.mode = 'indeterminate';
+              const n = p.downloaded || 0;
+              updatingProgressText.textContent = n > 0
+                ? '正在下载依赖… 已下载 ' + n + ' 个包'
+                : '正在下载依赖…';
             });
             window.__dshProgressHooked = true;
           }
@@ -849,6 +948,12 @@
         });
         btnCheck.addEventListener('click', checkUpdate);
         btnInstall.addEventListener('click', installUpdate);
+        btnAppInstallVer.addEventListener('click', installAppVersion);
+        appVersionSelect.addEventListener('change', () => {
+          const opt = appVersionSelect.options[appVersionSelect.selectedIndex];
+          appUpdateStabilityBadge(opt ? { prerelease: opt.classList.contains('v-pre') } : null);
+          syncAppInstallButtonState({ is_current: !!(opt && opt.classList.contains('v-current')) });
+        });
         btnDshCheck.addEventListener('click', checkDsh);
         btnDshUpgrade.addEventListener('click', () => upgradeDsh({ channel: 'stable' }));
         btnDshInstallVer.addEventListener('click', () => {

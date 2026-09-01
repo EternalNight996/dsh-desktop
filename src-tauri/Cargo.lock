@@ -692,8 +692,10 @@ dependencies = [
 
 [[package]]
 name = "dsh-desktop"
-version = "0.6.1"
+version = "0.7.0"
 dependencies = [
+ "base64 0.22.1",
+ "minisign-verify",
  "serde",
  "serde_json",
  "tauri",

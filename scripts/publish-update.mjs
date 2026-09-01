@@ -139,8 +139,13 @@ if (has('--manifest-only')) {
 }
 
 // ---- 4. 发布 ----
-const sigFiles = withSig.map((p) => p + '.sig');
-const assets = [...withSig, ...sigFiles, manifestPath];
+// 只上传与当前版本匹配的安装包 + 它的 .sig（避免历史版本产物污染 release 资产），
+// manifest（latest.json）始终包含。
+const versionAssets = withSig.filter((p) => basename(p).includes('_' + version + '_'));
+const assetsForRelease = versionAssets.length ? versionAssets : withSig; // 兜底：都无版本标记才退回全量
+const sigFiles = assetsForRelease.map((p) => p + '.sig');
+const assets = [...assetsForRelease, ...sigFiles, manifestPath];
+if (versionAssets.length === 0) console.warn('警告：未找到与当前版本匹配的安装包，退回全量（可能含旧版本）');
 
 function sh(cmd) {
   console.log('> ' + cmd);

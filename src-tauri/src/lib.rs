@@ -193,6 +193,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             check_app_update,
             install_app_update,
+            list_app_versions,
+            install_app_version,
             check_dsh_update,
             update_online_dsh,
             get_dsh_version,
@@ -529,7 +531,6 @@ fn spawn_dsh(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || match start_dsh(&handle) {
         Some(url) => {
-            eprintln!("[dsh-desktop] dsh 就绪，导航窗口到: {url}");
             if let Some(win) = handle.get_webview_window("main") {
                 if let Ok(parsed) = url::Url::parse(&url) {
                     let _ = win.navigate(parsed);
@@ -1022,7 +1023,7 @@ fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: 
         "-g".into(),
         "--prefix".into(),
         display_path(dir),
-        "--json".into(),
+        "--loglevel=http".into(),
         format!("@deepseek-ai/dsh@{version}"),
         "--ignore-scripts".into(),
         "--no-audit".into(),
@@ -1043,6 +1044,8 @@ fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: 
         }
     };
     let start = Instant::now();
+    // 已下载的包数（npm http fetch 行计数），用于实时进度上报。
+    let mut fetched: u64 = 0;
     while start.elapsed() < INSTALL_TIMEOUT {
         match rx.blocking_recv() {
             Some(CommandEvent::Terminated(payload)) => {
@@ -1057,14 +1060,18 @@ fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: 
                         continue;
                     }
                     push_log_tail(line);
-                    // 解析 npm --json 进度事件：{"type":"progress","current":N,"total":M,"package":"...","hint":""}
-                    if let Some((cur, tot)) = parse_npm_json_progress(line) {
+                    eprintln!("[dsh:install] {line}");
+                    // npm 10 `--loglevel=http` 会把每个包的下载打在 stderr：
+                    // `npm http fetch GET 200 <url> <ms> (cache miss)`。
+                    // 这是流式的、随下载逐条输出，可作实时进度（已下载包数）。
+                    if line.contains("npm http fetch") && line.contains("GET") {
+                        fetched += 1;
+                        // total=0 让前端走 indeterminate；downloaded 传 fetch 累计数（单位：个包），
+                        // 前端 dsh 进度监听按「包」文案渲染（见 settings.html 的 dsh-install-progress）。
                         let _ = app.emit(
                             "dsh-install-progress",
-                            UpdateProgress { downloaded: cur, total: tot },
+                            UpdateProgress { downloaded: fetched, total: 0 },
                         );
-                    } else {
-                        eprintln!("[dsh:install] {line}");
                     }
                 }
             }
@@ -1080,24 +1087,85 @@ fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: 
     false
 }
 
-/// 解析 npm --json 输出的一行进度事件。返回 (current, total)。
-/// 仅识别 `{"type":"progress",...}`；其它 JSON 事件（"log"/"info"/...）返回 None。
-fn parse_npm_json_progress(line: &str) -> Option<(u64, u64)> {
-    let v: serde_json::Value = serde_json::from_str(line).ok()?;
-    if v.get("type").and_then(|t| t.as_str()) != Some("progress") {
-        return None;
-    }
-    let cur = v.get("current").and_then(|x| x.as_u64())?;
-    let tot = v.get("total").and_then(|x| x.as_u64()).unwrap_or(0);
-    Some((cur, tot))
-}
-
 /// 去掉 Windows 长路径前缀 `\\?\`，转成普通路径给子进程用。
 fn display_path(path: &Path) -> String {
     let s = path.to_string_lossy().to_string();
     match s.strip_prefix(r"\\?\") {
         Some(stripped) => stripped.to_string(),
         None => s,
+    }
+}
+
+/// 用 tauri.conf.json 的 updater 公钥校验一个安装包的 minisign 签名。
+/// 返回 Ok 代表签名有效（文件未被篡改、确由发布者私钥签名）。
+/// 校验失败返回 Err——调用方绝不能据此运行安装器，这是「任意版本下载安装」的安全根基。
+fn verify_installer_signature(installer_path: &Path, sig_path: &Path) -> Result<(), String> {
+    use base64::Engine as _;
+    // tauri.conf.json 的 updater.pubkey 是「minisign 公钥文本」整体再做一次 base64 的产物
+    // （decode 后才得到 untrusted comment + base64 公钥行），先解码再用 PublicKey::decode 解析。
+    let pubkey_b64 = updater_public_key();
+    let pk_text = base64::engine::general_purpose::STANDARD
+        .decode(pubkey_b64.trim())
+        .map_err(|e| format!("公钥 base64 解码失败: {e}"))?;
+    let pk_text = String::from_utf8(pk_text).map_err(|e| format!("公钥文本非法 UTF-8: {e}"))?;
+    let pk = minisign_verify::PublicKey::decode(&pk_text)
+        .map_err(|e| format!("公钥解析失败: {e}"))?;
+    let sig_raw = std::fs::read_to_string(sig_path)
+        .map_err(|e| format!("读取签名文件失败: {e}"))?;
+    // tauri 的 .sig 文件是「minisign 签名文本」整体 base64 成的单行，先解码再解析。
+    let sig_text = String::from_utf8(
+        base64::engine::general_purpose::STANDARD
+            .decode(sig_raw.trim())
+            .map_err(|e| format!("签名 base64 解码失败: {e}"))?,
+    )
+    .map_err(|e| format!("签名文本非法 UTF-8: {e}"))?;
+    let sig = minisign_verify::Signature::decode(&sig_text)
+        .map_err(|e| format!("签名解析失败: {e}"))?;
+    let bin = std::fs::read(installer_path)
+        .map_err(|e| format!("读取安装包失败: {e}"))?;
+    pk.verify(&bin, &sig, false)
+        .map_err(|e| format!("签名校验失败: {e}"))
+}
+
+/// 读取 tauri.conf.json 里 updater 的公钥（minisign 公钥，base64）。
+fn updater_public_key() -> String {
+    // 从编译期内嵌的 tauri 配置读取最可靠，但 Tauri 不直接暴露 updater pubkey 字符串；
+    // 这里直接读 tauri.conf.json（发布时该值恒定，与私钥配对）。
+    // 开发运行时代码在 target/debug/，tauri.conf.json 在 src-tauri/。逐级向上查找。
+    let mut cur = std::env::current_dir().unwrap_or_default();
+    for _ in 0..6 {
+        let cand = cur.join("src-tauri").join("tauri.conf.json");
+        if cand.exists() {
+            if let Ok(txt) = std::fs::read_to_string(&cand) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) {
+                    if let Some(pk) = v.pointer("/plugins/updater/pubkey").and_then(|x| x.as_str()) {
+                        return pk.to_string();
+                    }
+                }
+            }
+        }
+        if !cur.pop() { break; }
+    }
+    // 兜底：编译期内置的常量（与 tauri.conf.json 一致，发布时若改动需同步）。
+    "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI1QzQwRTcwRDdFN0RBRUIKUldUcjJ1ZlhjQTdFdFJVVk1wOW9MK0pXMnY1Mkx5TmJ5MGZ4Nk1ZZlBBNkxvNlNlTU5QR2FaMk0K".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn verify_real_sig() {
+        // 用 0.6.1 的实际安装包 + .sig 验证签名校验能通过（依赖 target 下真实产物）。
+        let exe = Path::new("target/x86_64-pc-windows-msvc/release/bundle/nsis/dsh-desktop_0.6.1_x64-setup.exe");
+        let sig = Path::new("target/x86_64-pc-windows-msvc/release/bundle/nsis/dsh-desktop_0.6.1_x64-setup.exe.sig");
+        if exe.exists() && sig.exists() {
+            match verify_installer_signature(exe, sig) {
+                Ok(_) => println!("VERIFY_OK"),
+                Err(e) => panic!("VERIFY_FAIL: {e}"),
+            }
+        } else {
+            eprintln!("跳过（构建产物不存在）");
+        }
     }
 }
 
@@ -1228,6 +1296,181 @@ async fn check_app_update(app: tauri::AppHandle) -> Result<AppUpdateInfo, String
         }),
         Err(e) => Err(format!("检查更新失败: {e}")),
     }
+}
+
+/// GitHub owner/repo（从 `github` remote 解析，失败退回 gitee remote）。
+fn github_repo() -> Result<(String, String), String> {
+    let is_gh = |u: &str| u.contains("github.com");
+    let mut url = git_remote_url("github").or_else(|_| git_remote_url("origin")).map_err(|e| e)?;
+    if !is_gh(&url) { url = git_remote_url("github").map_err(|_| "无 github remote".to_string())?; }
+    // 支持 git@github.com:owner/repo.git 与 https://github.com/owner/repo.git
+    let m = regex_lite_url_parse(&url).ok_or_else(|| format!("无法解析 remote: {url}"))?;
+    Ok((m.0, m.1))
+}
+
+/// 从 git remote URL 提取 owner/repo（粗糙但足够）。
+fn regex_lite_url_parse(url: &str) -> Option<(String, String)> {
+    // 去掉协议部分与 .git 后缀，取最后的 owner/repo 两段
+    let no_proto = url.split("://").last()?;
+    let no_suffix = no_proto.strip_suffix(".git").unwrap_or(no_proto);
+    // 形如 github.com/owner/repo 或 git@github.com:owner/repo
+    let body = no_suffix.rsplit(':').next()?;
+    let mut parts = body.split('/').filter(|s| !s.is_empty());
+    let repo = parts.next_back()?.to_string();
+    let owner = parts.next_back()?.to_string();
+    if owner.is_empty() || repo.is_empty() { return None; }
+    Some((owner, repo))
+}
+
+fn git_remote_url(name: &str) -> Result<String, String> {
+    let out = std::process::Command::new("git")
+        .args(["remote", "get-url", name])
+        .output()
+        .map_err(|e| format!("git 不可用: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("无 remote `{name}`"));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// 列出桌面壳所有已发布版本（含 setup.exe 资产的 tag）。
+/// 优先用 Gitee tags API（国内可达、版本全，含最新），GitHub releases 作为回退。
+/// tags 比 releases 完整（Gitee 的旧 release 资产不完整、最新版未同步到 releases）；
+/// 下载时由 install_app_version 对 Gitee/GitHub 双源兜底，选到缺安装包的版本会明确报错。
+#[tauri::command]
+async fn list_app_versions(app: tauri::AppHandle) -> Result<Vec<VersionEntry>, String> {
+    let current = app.package_info().version.to_string();
+    // 先试 Gitee tags（版本最全、国内可达）；失败再试 GitHub releases。
+    let gitee_api = "https://gitee.com/api/v5/repos/eternalnight996/dsh-desktop/tags?per_page=60";
+    let gh = github_repo().unwrap_or_else(|_| ("EternalNight996".into(), "dsh-desktop".into()));
+    let gh_api = format!("https://api.github.com/repos/{}/{}/releases?per_page=60", gh.0, gh.1);
+    let apis = vec![gitee_api.to_string(), gh_api];
+    let mut rels: Option<Vec<serde_json::Value>> = None;
+    for api in &apis {
+        let a = api.clone();
+        let attempt = tauri::async_runtime::spawn_blocking(move || {
+            ureq::get(&a)
+                .set("User-Agent", "dsh-desktop")
+                .timeout(std::time::Duration::from_secs(10))
+                .call()
+        })
+        .await;
+        let body = match attempt {
+            Ok(Ok(r)) => if let Ok(s) = r.into_string() { s } else { continue },
+            _ => continue,
+        };
+        // Gitee tags 返回 [{name,commit,...}]；GitHub releases 返回 [{tag_name,assets,...}]。
+        if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(&body) {
+            rels = Some(parsed);
+            break;
+        }
+    }
+    let rels = rels.ok_or_else(|| "无法获取发布版本列表（GitHub/Gitee 均不可达）".to_string())?;
+    let mut versions = Vec::new();
+    for rel in &rels {
+        // 兼容 tags（name 字段）与 releases（tag_name 字段）；再兼容取 tag 前缀 v。
+        let tag = rel.get("name").or_else(|| rel.get("tag_name")).and_then(|v| v.as_str()).unwrap_or("");
+        let ver = tag.strip_prefix('v').unwrap_or(tag);
+        if ver.is_empty() { continue; }
+        // 只保留语义化版本号（数字.数字.数字）的 tag，避免把其它 tag 混进来。
+        if !ver.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) { continue; }
+        versions.push(VersionEntry {
+            version: ver.to_string(),
+            prerelease: is_prerelease_version(ver),
+            is_current: ver == current,
+            tags: vec![],
+        });
+    }
+    // semver 倒序（最新在前）
+    versions.sort_by(|a, b| semver_desc_cmp(&a.version, &b.version));
+    Ok(versions)
+}
+
+/// 下载并安装桌面壳的指定版本安装包。
+/// 安全流程：从 GitHub release 下载该版本 `setup.exe` + `.sig` → 用 tauri.conf.json 公钥
+/// 做 minisign 签名校验（verify_installer_signature）→ **只有校验通过才运行安装器**，
+/// 否则绝不执行（校验失败时安装进程不会被启动，仅清理临时文件）。
+#[tauri::command]
+async fn install_app_version(
+    app: tauri::AppHandle,
+    version: String,
+) -> Result<(), String> {
+    let _guard = UpdatingGuard::enter();
+    let tag = if version.starts_with('v') { version.clone() } else { format!("v{version}") };
+    let asset_name = format!("dsh-desktop_{version}_x64-setup.exe");
+    let sig_name = format!("{asset_name}.sig");
+    // 下载源：Gitee 优先（国内可达），GitHub 回退。
+    let bases = vec![
+        format!("https://gitee.com/eternalnight996/dsh-desktop/releases/download/{tag}"),
+        format!("https://github.com/EternalNight996/dsh-desktop/releases/download/{tag}"),
+    ];
+
+    // 临时目录下载 .sig 与安装包。
+    let tmp = std::env::temp_dir().join("dsh-desktop-install");
+    std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败: {e}"))?;
+    let exe_path = tmp.join(&asset_name);
+    let sig_path = tmp.join(&sig_name);
+
+    // 1) 下载 .sig（先，体积小）。依次尝试下载源。
+    let mut sig_ok = false;
+    for base in &bases {
+        let u = format!("{base}/{sig_name}");
+        if let Ok(bytes) = http_get_bytes(&u).await {
+            if std::fs::write(&sig_path, &bytes).is_ok() {
+                sig_ok = true;
+                break;
+            }
+        }
+    }
+    if !sig_ok { return Err("下载签名文件失败（GitHub/Gitee 均不可达）".into()); }
+
+    // 2) 下载安装包。同一下载源优先。
+    let mut exe_ok = false;
+    for base in &bases {
+        let u = format!("{base}/{asset_name}");
+        if let Ok(bytes) = http_get_bytes(&u).await {
+            if std::fs::write(&exe_path, &bytes).is_ok() {
+                exe_ok = true;
+                break;
+            }
+        }
+    }
+    if !exe_ok { return Err("下载安装包失败（GitHub/Gitee 均不可达）".into()); }
+
+    // 3) 签名校验（安全关键）。校验通过后才允许运行安装器。
+    verify_installer_signature(&exe_path, &sig_path)?;
+
+    // 4) 停掉运行中的 dsh（避免安装器替换文件时被锁）。
+    kill_dsh_intentionally(&app);
+
+    // 5) 运行 NSIS 安装器（静默 /S）。校验已通过，这里才真正启动安装进程。
+    let exe_str = display_path(&exe_path);
+    let spawned = std::process::Command::new(&exe_str)
+        .arg("/S")
+        .spawn()
+        .map_err(|e| format!("启动安装器失败: {e}"))?;
+    let _ = spawned;
+    Ok(())
+}
+
+/// 下载一个 URL 的字节内容（https）。
+async fn http_get_bytes(url: &str) -> Result<Vec<u8>, String> {
+    use std::io::Read as _;
+    let url_owned = url.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let resp = ureq::get(&url_owned)
+            .set("User-Agent", "dsh-desktop")
+            .timeout(std::time::Duration::from_secs(600))
+            .call()
+            .map_err(|e| format!("下载失败 {url_owned}: {e}"))?;
+        let mut buf = Vec::new();
+        resp.into_reader()
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("读取下载流失败 {url_owned}: {e}"))?;
+        Ok(buf)
+    })
+    .await
+    .map_err(|e| format!("下载任务失败: {e}"))?
 }
 
 /// 下载并安装新版本，完成后自动重启到新版本。

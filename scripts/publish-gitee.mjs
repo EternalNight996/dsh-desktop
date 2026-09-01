@@ -219,8 +219,12 @@ const rawForm = new URLSearchParams({
   message: 'release: update latest.json (' + tag + ')',
   branch: giteeRawBranch,
 });
-const rawUp = await apiJson(`/repos/${owner}/${repo}/contents/latest.json`, { method: 'POST', body: rawForm });
+// Gitee contents API：文件已存在需用 PUT，不存在用 POST。先查询判断。
+const existingRaw = await apiJson(`/repos/${owner}/${repo}/contents/latest.json`, { params: { access_token: token, ref: giteeRawBranch } });
+const rawMethod = existingRaw.json && existingRaw.json.sha ? 'PUT' : 'POST';
+const rawPath = existingRaw.json && existingRaw.json.sha ? `/repos/${owner}/${repo}/contents/latest.json` : `/repos/${owner}/${repo}/contents/latest.json`;
+const rawUp = await apiJson(rawPath, { method: rawMethod, body: rawForm });
 if (rawUp.status >= 200 && rawUp.status < 300) console.log(`latest.json 已写入 ${giteeRawBranch} 分支（raw 端点固定可用）`);
-else console.error('写入分支失败（可能需先删除旧文件）:', rawUp.status, rawUp.text);
+else console.error('写入分支失败:', rawUp.status, rawUp.text);
 
 console.log('Gitee 发布完成:', `https://gitee.com/${owner}/${repo}/releases/tag/${tag}`);

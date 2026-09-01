@@ -1,6 +1,6 @@
 [package]
 name = "dsh-desktop"
-version = "0.6.1"
+version = "0.7.0"
 description = "Self-contained desktop shell for DeepSeek Harness (dsh): bundles a Node sidecar, auto-starts dsh and loads its Web UI"
 authors = ["EternalNight <eternalnightyeah2@yeah.net>"]
 edition = "2021"
@@ -21,3 +21,5 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 url = "2"
 ureq = { version = "2", features = ["json"] }
+minisign-verify = "0.2"
+base64 = "0.22"
