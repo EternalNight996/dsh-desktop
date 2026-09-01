@@ -12,6 +12,10 @@
         --muted: #94a3b8;
         --panel: rgba(15, 23, 42, 0.92);
         --border: rgba(148, 163, 184, 0.18);
+        /* 预发布通道（alpha）警示色：与稳定版主蓝形成对比，一眼区分。 */
+        --warn: #f59e0b;
+        --warn-soft: rgba(245, 158, 11, 0.16);
+        --warn-border: rgba(245, 158, 11, 0.55);
       }
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { height: 100%; }
@@ -84,6 +88,99 @@
         background: linear-gradient(90deg, var(--accent), var(--accent2));
         border-color: transparent;
         color: #fff;
+      }
+      .actions button.warn {
+        border-color: var(--warn-border);
+        color: var(--warn);
+        background: var(--warn-soft);
+      }
+      .actions button.warn:hover:not(:disabled) { background: rgba(245, 158, 11, 0.28); }
+      /* 预发布通道整行弱化底色，与稳定版主区视觉分层 */
+      .row.prerelease {
+        background: var(--warn-soft);
+        border-radius: 6px;
+        padding: 7px 10px;
+        margin: 2px 0;
+      }
+      .row.prerelease span { color: var(--warn); }
+      .tag-alpha {
+        display: inline-block;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.4px;
+        padding: 1px 6px;
+        margin-left: 6px;
+        border-radius: 999px;
+        background: var(--warn);
+        color: #1f1300;
+        vertical-align: 1px;
+      }
+      /* 升级遮罩：覆盖整个设置窗口，半透明 + 进度文案。配合后端 IS_UPDATING 拦截关闭。 */
+      #updating-mask {
+        position: fixed;
+        inset: 0;
+        background: rgba(2, 6, 23, 0.78);
+        backdrop-filter: blur(2px);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        pointer-events: all;
+      }
+      #updating-mask.show { display: flex; }
+      #updating-mask .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 22px 28px;
+        text-align: center;
+        min-width: 260px;
+        max-width: 360px;
+      }
+      #updating-mask .spinner {
+        width: 32px;
+        height: 32px;
+        margin: 0 auto 12px;
+        border: 3px solid rgba(14, 165, 233, 0.25);
+        border-top-color: var(--accent);
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      #updating-mask .title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+      #updating-mask .desc { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+      /* 进度条：圆角胶囊 + 主蓝渐变填充 + 流光动画。
+         indeterminate 态（total=0）时宽度脉动；determinate 态按 percentage 填充。 */
+      #updating-mask .progress-track {
+        width: 100%;
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(148, 163, 184, 0.18);
+        overflow: hidden;
+        position: relative;
+      }
+      #updating-mask .progress-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: linear-gradient(90deg, #38bdf8, #818cf8);
+        transition: width 0.25s ease;
+        width: 0%;
+      }
+      #updating-mask[data-mode="indeterminate"] .progress-fill {
+        width: 35%;
+        animation: progress-indet 1.4s ease-in-out infinite;
+        background: linear-gradient(90deg, #38bdf8, #818cf8);
+      }
+      @keyframes progress-indet {
+        0%   { transform: translateX(-100%); }
+        50%  { transform: translateX(180%); }
+        100% { transform: translateX(180%); }
+      }
+      #updating-mask .progress-text {
+        font-size: 11px;
+        color: var(--muted);
+        margin-top: 8px;
+        font-variant-numeric: tabular-nums;
       }
       .hint { font-size: 11px; color: var(--muted); opacity: 0.8; line-height: 1.6; margin-top: 8px; }
       .switch-row {
@@ -171,6 +268,135 @@
       }
       .dlg-actions button.primary:hover:not(:disabled) { filter: brightness(1.12); }
       .dlg-actions button:disabled { opacity: 0.5; cursor: default; }
+
+      /* ===== 版本选择下拉（替代两个独立按钮） ===== */
+      .version-picker {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }
+      /* 下拉外框：深中性灰蓝（与面板基底同色系），靠细微边框 + 焦点光晕表达交互。
+         避免大面积纯蓝视觉重量；与卡片整体深色调和谐。 */
+      .version-picker select {
+        flex: 1 1 220px;
+        min-width: 0;
+        background: #1e293b;
+        color: #e2e8f0;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 10px;
+        padding: 9px 12px;
+        font-size: 13px;
+        font-family: inherit;
+        cursor: pointer;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+        appearance: none;
+        -webkit-appearance: none;
+        background-image:
+          linear-gradient(180deg, #1e293b 0%, #1e293b 100%),
+          url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 4.5 L6 7.5 L9 4.5' stroke='%2394a3b8' stroke-width='1.8' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+        background-repeat: no-repeat, no-repeat;
+        background-position: 0 0, right 10px center;
+        background-size: 100% 100%, 12px 12px;
+        padding-right: 32px;
+      }
+      .version-picker select:hover {
+        border-color: rgba(148, 163, 184, 0.5);
+        box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12);
+      }
+      .version-picker select:focus {
+        outline: none;
+        border-color: #38bdf8;
+        box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.28);
+      }
+      /* ===== 下拉打开后的 option 面板配色 =====
+         人类视觉友好的设计原则：
+         1. 高对比度（背景/文字对比度 ≥ 7:1，WCAG AAA）
+         2. 色觉无障碍（不靠单一红绿色区分，靠色相 + 形状/位置/前缀多重编码）
+         3. 视觉舒适（避免大面积高饱和度色块；用深中性色为底，局部用色块标记）
+         4. 三态清晰（稳定 / 预发布 / 当前）颜色 + 形状双重标识
+         5. WebView2 原生 <select> 弹出面板对 CSS 支持有限（background/color 生效，
+            linear-gradient/box-shadow/font-weight 多被忽略），写法同时存在以便未来版本支持。
+      */
+      /* 面板基底：深中性灰蓝（与外框/卡片整体深色调一致，避免色块跳变） */
+      .version-picker select option {
+        background: #1e293b;
+        color: #e2e8f0; /* 对比度 11.7:1，AAA */
+        padding: 8px 12px;
+        font-size: 13px;
+      }
+      /* 稳定版：左侧 4px 绿色色条 + 文字用稍亮的浅绿调；
+         不靠整行变色，靠「色条 + 文字色」双重标识。色盲友好：位置 + 色相。 */
+      .version-picker option.v-stable {
+        color: #bbf7d0; /* 浅绿，柔和不刺眼 */
+        border-left: 4px solid #22c55e;
+        padding-left: 8px;
+      }
+      /* 预发布：左侧 4px 琥珀色色条 + 文字琥珀调。
+         琥珀色与绿色在色盲光谱里区分度比红绿高（色觉异常主要红绿难分，黄蓝可分）。 */
+      .version-picker option.v-pre {
+        color: #fde68a; /* 浅琥珀 */
+        border-left: 4px solid #f59e0b;
+        padding-left: 8px;
+      }
+      /* 当前版本：浅中性灰底（不靠颜色与背景强对比，靠「位置 + 加粗 + 颜色条 + 前缀符号」四重标识）——
+         整行加粗 + 左侧 6px 实色蓝条（比稳定/预发的 4px 更粗，权重更大）+ 顶部 ▲ 标记（JS 已加 ◆）；
+         颜色上用更亮的浅色文字保证可读，不靠整行变色（避免大面积高饱和色块视觉疲劳）。 */
+      .version-picker option.v-current {
+        color: #ffffff;
+        background: #334155; /* 比面板基底亮一档，不刺眼 */
+        background: linear-gradient(90deg, #334155 0%, #1e293b 100%);
+        font-weight: 700;
+        border-left: 6px solid #38bdf8;
+        padding-left: 6px;
+      }
+      /* 悬停态：WebView2 在现代版本上支持 */
+      .version-picker option:hover:not(.v-current) {
+        background: #475569;
+        color: #ffffff;
+      }
+      /* 「安装所选版本」按钮紧贴下拉右侧：与 .primary 同色但加深投影、增大点击区，明确「主操作」 */
+      .install-version-btn {
+        flex: 0 0 auto;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 9px 18px;
+        white-space: nowrap;
+        border-radius: 10px;
+        box-shadow: 0 4px 14px rgba(14, 165, 233, 0.32);
+        transition: filter 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+      }
+      .install-version-btn:hover:not(:disabled) {
+        filter: brightness(1.08);
+        box-shadow: 0 6px 18px rgba(14, 165, 233, 0.42);
+        transform: translateY(-1px);
+      }
+      .install-version-btn:active:not(:disabled) {
+        transform: translateY(0);
+        box-shadow: 0 2px 8px rgba(14, 165, 233, 0.32);
+      }
+      /* 当前版本不触发时：弱化态 —— 浅灰底深字，去掉主蓝视觉权重，提示「无需操作」 */
+      .install-version-btn:disabled {
+        background: rgba(148, 163, 184, 0.18);
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        color: rgba(226, 232, 240, 0.55);
+        box-shadow: none;
+        cursor: not-allowed;
+      }
+      /* 已选版本的稳定性指示条（位于 select 右侧） */
+      .version-stability {
+        font-size: 11px;
+        padding: 5px 12px;
+        border-radius: 999px;
+        border: 1px solid;
+        white-space: nowrap;
+        font-weight: 600;
+        letter-spacing: 0.3px;
+      }
+      /* 稳定性徽章用深色低饱和底色 + 高饱和文字（与深色卡片和谐、对比够） */
+      .version-stability.s-stable { color: #86efac; border-color: rgba(134, 239, 172, 0.4); background: rgba(34, 197, 94, 0.12); }
+      .version-stability.s-pre { color: #fcd34d; border-color: rgba(252, 211, 77, 0.4); background: rgba(245, 158, 11, 0.12); }
     </style>
   </head>
   <body>
@@ -190,21 +416,30 @@
         <h2>桌面壳更新</h2>
         <div class="status" id="app-status">正在检查更新…</div>
         <div class="actions">
-          <button id="btn-check">更新配置</button>
+          <button id="btn-check">更新 desktop</button>
           <button id="btn-install" class="primary" hidden>立即更新</button>
         </div>
       </div>
 
       <div class="card">
-        <h2>dsh 引擎</h2>
+        <h2>更新 dsh</h2>
         <div class="row"><span>当前版本</span><b id="dsh-cur">—</b></div>
-        <div class="row"><span>官方最新</span><b id="dsh-latest">—</b></div>
+        <div class="row"><span>官方最新（latest tag）</span><b id="dsh-latest">—</b></div>
+        <div class="row prerelease" id="dsh-prerelease-row" hidden>
+          <span>预发布版 <span class="tag-alpha" id="dsh-prerelease-tag">alpha</span></span>
+          <b id="dsh-prerelease">—</b>
+        </div>
+        <div id="dsh-version-picker" class="version-picker" hidden>
+          <select id="dsh-version-select" size="1"></select>
+          <button id="btn-dsh-install-version" class="primary install-version-btn" hidden>安装所选版本</button>
+          <span id="dsh-version-stability" class="version-stability s-stable">稳定</span>
+        </div>
         <div class="row"><span>终端 dsh 命令</span><b id="cli-dsh-path">—</b></div>
         <div class="status" id="dsh-status"></div>
         <div class="status" id="cli-status"></div>
         <div class="actions">
           <button id="btn-dsh-check">更新 dsh</button>
-          <button id="btn-dsh-upgrade" class="primary" hidden>升级 dsh</button>
+          <button id="btn-dsh-upgrade" class="primary" hidden>升级到稳定版</button>
           <button id="btn-cli-unify" hidden>统一终端 dsh</button>
         </div>
         <p class="hint" id="dsh-hint"></p>
@@ -231,11 +466,64 @@
       </div>
     </div>
 
+    <!-- 升级遮罩：覆盖整个设置窗口，配合后端 IS_UPDATING 拦截关闭；防止用户中途退出造成半安装。 -->
+    <div id="updating-mask" data-mode="indeterminate">
+      <div class="panel">
+        <div class="spinner"></div>
+        <div class="title" id="updating-title">升级进行中</div>
+        <div class="desc" id="updating-desc">请勿关闭窗口或退出应用，完成后会自动继续。</div>
+        <div class="progress-track"><div class="progress-fill" id="updating-fill"></div></div>
+        <div class="progress-text" id="updating-progress-text">准备中…</div>
+      </div>
+    </div>
+
     <script>
       // Tauri 注入的全局 API（tauri.conf.json 开启 withGlobalTauri）。
       const tauriCore = window.__TAURI__ && window.__TAURI__.core;
       const tauriEvent = window.__TAURI__ && window.__TAURI__.event;
       const tauriApp = window.__TAURI__ && window.__TAURI__.app;
+
+      // 升级遮罩：升级期间显示，配合后端 IS_UPDATING 拦截关闭。
+      const updatingMask = document.getElementById('updating-mask');
+      const updatingFill = document.getElementById('updating-fill');
+      const updatingProgressText = document.getElementById('updating-progress-text');
+      const updatingTitle = document.getElementById('updating-title');
+      const updatingDesc = document.getElementById('updating-desc');
+
+      // 格式化字节数为人类可读（KB/MB/GB）
+      function fmtBytes(n) {
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        if (n < 1024 * 1024 * 1024) return (n / 1024 / 1024).toFixed(1) + ' MB';
+        return (n / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+      }
+
+      // 统一处理进度事件：downloaded/total 单位字节；total=0 表示「未知/indeterminate」。
+      function applyProgress(downloaded, total) {
+        if (!total || total === 0) {
+          updatingMask.dataset.mode = 'indeterminate';
+          updatingProgressText.textContent = downloaded > 0
+            ? '已下载 ' + fmtBytes(downloaded) + '…'
+            : '准备中…';
+        } else {
+          updatingMask.dataset.mode = 'determinate';
+          const pct = Math.min(100, Math.round((downloaded / total) * 100));
+          updatingFill.style.width = pct + '%';
+          updatingProgressText.textContent = fmtBytes(downloaded) + ' / ' + fmtBytes(total) + ' · ' + pct + '%';
+        }
+      }
+      function resetProgress(label) {
+        updatingMask.dataset.mode = 'indeterminate';
+        updatingFill.style.width = '0%';
+        updatingProgressText.textContent = label || '准备中…';
+      }
+      function showUpdatingMask(title, desc, label) {
+        if (title) updatingTitle.textContent = title;
+        if (desc) updatingDesc.textContent = desc;
+        resetProgress(label);
+        updatingMask.classList.add('show');
+      }
+      function hideUpdatingMask() { updatingMask.classList.remove('show'); }
 
       const appStatusEl = document.getElementById('app-status');
       const dshStatusEl = document.getElementById('dsh-status');
@@ -243,6 +531,10 @@
       const btnInstall = document.getElementById('btn-install');
       const btnDshCheck = document.getElementById('btn-dsh-check');
       const btnDshUpgrade = document.getElementById('btn-dsh-upgrade');
+      const btnDshInstallVer = document.getElementById('btn-dsh-install-version');
+      const dshVersionPicker = document.getElementById('dsh-version-picker');
+      const dshVersionSelect = document.getElementById('dsh-version-select');
+      const dshVersionStability = document.getElementById('dsh-version-stability');
       const dshHint = document.getElementById('dsh-hint');
       const autoCheck = document.getElementById('auto-check');
       const dlg = document.getElementById('update-dialog');
@@ -289,11 +581,13 @@
       async function installUpdate() {
         btnInstall.disabled = true;
         btnCheck.disabled = true;
+        showUpdatingMask('正在更新 desktop', '请勿关闭窗口或退出应用，完成后会自动重启。', '准备下载…');
         setAppStatus('正在下载更新…');
         try {
           if (tauriEvent) {
             await tauriEvent.listen('update-progress', (ev) => {
               const p = ev.payload || {};
+              applyProgress(p.downloaded || 0, p.total || 0);
               const pct = p.total ? Math.round((p.downloaded / p.total) * 100) : 0;
               setAppStatus('正在下载更新… ' + pct + '%');
             });
@@ -301,6 +595,7 @@
           await tauriCore.invoke('install_app_update');
           // 正常不会走到这里：安装完成后应用会自动重启。
         } catch (e) {
+          hideUpdatingMask();
           setAppStatus('更新失败：' + e);
           btnInstall.disabled = false;
           btnCheck.disabled = false;
@@ -309,30 +604,113 @@
       }
 
       // ---- dsh 引擎更新 ----
+      // 渲染版本下拉框：semver 倒序，绿色 = 正式版（不含 pre-release 后缀），黄色 = 预发布（含 rc/alpha/beta/...）。
+      // 选项文本追加 dist-tag 标签（如 [latest] / [alpha]），「已安装」标记当前版本。
+      // 同步「安装所选版本」按钮的可点状态：选的是当前已装版本则置灰，文案改「已是当前版本」。
+      function syncInstallButtonState(v) {
+        if (!v) {
+          btnDshInstallVer.disabled = true;
+          btnDshInstallVer.textContent = '安装所选版本';
+          return;
+        }
+        if (v.is_current) {
+          btnDshInstallVer.disabled = true;
+          btnDshInstallVer.textContent = '已是当前版本';
+        } else {
+          btnDshInstallVer.disabled = false;
+          btnDshInstallVer.textContent = '安装所选版本';
+        }
+      }
+
+      function renderVersionPicker(versions, current) {
+        dshVersionSelect.innerHTML = '';
+        for (const v of versions) {
+          const opt = document.createElement('option');
+          opt.value = v.version;
+          const tagSuffix = v.tags.length ? ' [' + v.tags.join(',') + ']' : '';
+          const currentMark = v.is_current ? '  ★ 当前已装' : '';
+          const kindLabel = v.prerelease ? '（预发布）' : '（稳定）';
+          // 文本前缀用方块符号给当前项加视觉强标（原生 option 不支持伪元素，文本前缀最稳）
+          const prefix = v.is_current ? '◆ ' : '   ';
+          opt.textContent = prefix + 'v' + v.version + tagSuffix + kindLabel + currentMark;
+          opt.className = v.prerelease ? 'v-pre' : 'v-stable';
+          if (v.is_current) opt.classList.add('v-current');
+          dshVersionSelect.appendChild(opt);
+        }
+        const idx = versions.findIndex((v) => v.is_current);
+        const selected = idx >= 0 ? idx : 0;
+        dshVersionSelect.selectedIndex = selected;
+        updateStabilityBadge(versions[selected]);
+        syncInstallButtonState(versions[selected]);
+        dshVersionPicker.hidden = versions.length === 0;
+        btnDshInstallVer.hidden = versions.length === 0;
+      }
+
+      function updateStabilityBadge(v) {
+        if (!v) {
+          dshVersionStability.textContent = '';
+          dshVersionStability.className = 'version-stability';
+          return;
+        }
+        dshVersionStability.textContent = v.prerelease ? '预发布' : '稳定';
+        dshVersionStability.className = 'version-stability ' + (v.prerelease ? 's-pre' : 's-stable');
+      }
+
       async function checkDsh() {
         if (!tauriCore) { setDshStatus('当前环境不支持更新配置'); return; }
         btnDshCheck.disabled = true;
         setDshStatus('更新 dsh 中…');
+        btnDshUpgrade.hidden = true;
+        btnDshInstallVer.hidden = true;
+        dshVersionPicker.hidden = true;
+        document.getElementById('dsh-prerelease-row').hidden = true;
         try {
           const info = await tauriCore.invoke('check_dsh_update');
           document.getElementById('dsh-cur').textContent = 'v' + info.current_version;
           document.getElementById('dsh-latest').textContent = 'v' + info.latest_version;
           const modeEl = document.getElementById('dsh-mode');
+          const preRow = document.getElementById('dsh-prerelease-row');
+          const preEl = document.getElementById('dsh-prerelease');
+          const preTagEl = document.getElementById('dsh-prerelease-tag');
+          const preVersion = info.prerelease_version || null;
+          const preKind = info.prerelease_kind || (preVersion ? 'alpha' : null);
+          if (preVersion) {
+            preEl.textContent = 'v' + preVersion;
+            preTagEl.textContent = preKind || 'alpha';
+            preRow.hidden = false;
+          }
+          if (info.online && Array.isArray(info.versions) && info.versions.length > 0) {
+            renderVersionPicker(info.versions, info.current_version);
+          }
+          const stableNewer = info.latest_version && info.latest_version !== info.current_version;
+          const preNewer = preVersion && preVersion !== info.current_version;
           if (info.online) {
             modeEl.textContent = '在线（全局安装）';
-            dshHint.textContent = '在线方案：dsh 装在全局 npm 前缀（与终端 dsh 命令同源），可在此一键升级，升级后自动重启引擎生效。';
-            if (info.has_update) {
+            dshHint.textContent = '在线方案：dsh 装在全局 npm 前缀（与终端 dsh 命令同源）。下方下拉可选任意版本（绿=正式 / 黄=预发布 / 蓝=当前已装），点右侧「安装所选版本」一键安装；快速通道「升级到稳定版」一键到 latest tag。';
+            if (stableNewer) {
               btnDshUpgrade.hidden = false;
+              btnDshUpgrade.textContent = '升级到稳定版 v' + info.latest_version;
+            }
+            if (stableNewer && preNewer) {
+              setDshStatus('稳定 v' + info.latest_version + ' 与预发布 v' + preVersion + ' 均高于当前');
+            } else if (stableNewer) {
               setDshStatus('有新版可升级（v' + info.latest_version + '）');
+            } else if (preNewer) {
+              setDshStatus('预发布版 v' + preVersion + ' 可用（alpha，可能不稳定）');
             } else {
-              btnDshUpgrade.hidden = true;
               setDshStatus('已是最新版本');
             }
           } else {
             modeEl.textContent = '离线（安装包内置）';
-            btnDshUpgrade.hidden = true;
             dshHint.textContent = '离线版内置 dsh，升级需维护者 just update 后重新打包发布。';
-            setDshStatus(info.has_update ? '官方已有新版 v' + info.latest_version + '，等待新版安装包发布' : '已是最新版本');
+            if (stableNewer || preNewer) {
+              const parts = [];
+              if (stableNewer) parts.push('稳定 v' + info.latest_version);
+              if (preNewer) parts.push('预发布 v' + preVersion);
+              setDshStatus('官方已有新版 ' + parts.join(' / ') + '，等待新版安装包发布');
+            } else {
+              setDshStatus('已是最新版本');
+            }
           }
         } catch (e) {
           setDshStatus('检查 dsh 失败：' + e);
@@ -341,18 +719,50 @@
         }
       }
 
-      async function upgradeDsh() {
+      async function upgradeDsh(opts) {
+        // opts: { channel: 'stable' }（快速通道）或 { version: 'x.y.z' }（下拉选择）
+        const isByVersion = !!opts.version;
+        const btn = isByVersion ? btnDshInstallVer : btnDshUpgrade;
+        // 互锁所有按钮
         btnDshUpgrade.disabled = true;
-        setDshStatus('正在升级 dsh…（需下载依赖，请稍候）');
+        btnDshInstallVer.disabled = true;
+        btnDshCheck.disabled = true;
+        let title = '正在升级 dsh';
+        let targetLabel = '';
+        if (isByVersion) targetLabel = '到 v' + opts.version;
+        else targetLabel = '到稳定版 v' + (opts.latest_version || '');
+        showUpdatingMask(
+          title + ' ' + targetLabel,
+          '请勿关闭窗口或退出应用，下载并安装依赖需要数十秒到数分钟。',
+          '准备下载…'
+        );
+        setDshStatus(title + ' ' + targetLabel + '…（需下载依赖，请稍候）');
         try {
-          const v = await tauriCore.invoke('update_online_dsh');
-          btnDshUpgrade.hidden = true;
+          const args = isByVersion
+            ? { version: opts.version }
+            : { channel: opts.channel || 'stable' };
+          // 监听 npm install 进度事件；install_app_update 用同 payload 但不同事件名
+          if (tauriEvent && !window.__dshProgressHooked) {
+            await tauriEvent.listen('dsh-install-progress', (ev) => {
+              const p = ev.payload || {};
+              applyProgress(p.downloaded || 0, p.total || 0);
+            });
+            window.__dshProgressHooked = true;
+          }
+          const v = await tauriCore.invoke('update_online_dsh', args);
           document.getElementById('dsh-cur').textContent = 'v' + v;
           document.getElementById('dsh-latest').textContent = 'v' + v;
+          hideUpdatingMask();
           setDshStatus('dsh 已升级到 v' + v + '，正在重启引擎…');
+          // 重新拉一次版本列表刷新「已安装」标记
+          await checkDsh();
         } catch (e) {
+          hideUpdatingMask();
           setDshStatus('升级 dsh 失败：' + e);
+          btn.disabled = false;
           btnDshUpgrade.disabled = false;
+          btnDshInstallVer.disabled = false;
+          btnDshCheck.disabled = false;
         }
       }
 
@@ -440,7 +850,28 @@
         btnCheck.addEventListener('click', checkUpdate);
         btnInstall.addEventListener('click', installUpdate);
         btnDshCheck.addEventListener('click', checkDsh);
-        btnDshUpgrade.addEventListener('click', upgradeDsh);
+        btnDshUpgrade.addEventListener('click', () => upgradeDsh({ channel: 'stable' }));
+        btnDshInstallVer.addEventListener('click', () => {
+          const opt = dshVersionSelect.options[dshVersionSelect.selectedIndex];
+          // 兜底：即便按钮 enabled 状态被绕过，选的是当前版本就不触发升级
+          if (opt && opt.classList.contains('v-current')) {
+            setDshStatus('所选版本 v' + dshVersionSelect.value + ' 已是当前安装版本');
+            return;
+          }
+          const sel = dshVersionSelect.value;
+          if (!sel) return;
+          upgradeDsh({ version: sel });
+        });
+        // 下拉选择变化时更新右侧稳定性徽章
+        dshVersionSelect.addEventListener('change', () => {
+          const opt = dshVersionSelect.options[dshVersionSelect.selectedIndex];
+          const pre = opt && opt.classList.contains('v-pre');
+          const isCurrent = opt && opt.classList.contains('v-current');
+          dshVersionStability.textContent = pre ? '预发布' : '稳定';
+          dshVersionStability.className = 'version-stability ' + (pre ? 's-pre' : 's-stable');
+          // 当前已装的版本：按钮置灰、文案改「已是当前版本」，防止重复安装
+          syncInstallButtonState({ is_current: !!isCurrent, prerelease: !!pre });
+        });
         btnCliUnify.addEventListener('click', unifyCli);
         dlgInstall.addEventListener('click', dialogInstall);
         dlgLater.addEventListener('click', dialogLater);
@@ -451,6 +882,12 @@
           tauriEvent.listen('dsh-update-available', () => checkDsh());
           // 后台终端 dsh 统一结果：刷新状态行。
           tauriEvent.listen('dsh-cli-status', (e) => renderCliStatus(e.payload));
+          // 后端拦截关闭/退出（升级中）：给用户提示。
+          tauriEvent.listen('update-blocked', (e) => {
+            const msg = (e && e.payload) || '升级进行中，请等待完成';
+            setAppStatus(String(msg));
+            setDshStatus(String(msg));
+          });
         }
         // 打开即检查：桌面壳 + dsh + 终端路径。
         checkUpdate();

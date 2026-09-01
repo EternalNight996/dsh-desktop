@@ -14,7 +14,7 @@
 use std::collections::VecDeque;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -44,6 +44,17 @@ static DSH_LOG_TAIL: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());
 static DSH_ERROR: Mutex<Option<String>> = Mutex::new(None);
 /// 主窗口初始加载页 URL（进入错误态时导航回此页）。
 static LOADER_URL: Mutex<Option<String>> = Mutex::new(None);
+/// 升级锁：dsh / 桌面壳升级期间为 true。
+/// 期间拦截：主窗口 CloseRequested、托盘退出、RunEvent::ExitRequested，
+/// 防止用户中途关闭导致半安装状态（npm install 半途 / 桌面壳更新半下载）。
+static IS_UPDATING: AtomicBool = AtomicBool::new(false);
+
+/// 当前代 dsh 打出的 Web UI 完整 URL（可能带 token）。
+/// dsh alpha 起在 web 子命令加进程级 token 认证：根路径不带头 token 一律 401，
+/// 只有启动日志 `dsh web: http://127.0.0.1:<port>/?token=…` 里的 URL 才是能进页面的
+/// 地址。stdout 消费线程解析到后写入；`wait_ready` 用它判就绪并返回给 navigate。
+/// None = 尚无有效 URL（含稳定版未带 token 时的退化路径，此时退回 `127.0.0.1:port/`）。
+static DSH_WEB_URL: Mutex<Option<String>> = Mutex::new(None);
 
 /// 稳定运行阈值：dsh 存活满此时长后崩溃计数归零（视为新一轮偶发故障）。
 const STABLE_UPTIME: Duration = Duration::from_secs(300);
@@ -110,6 +121,37 @@ fn kill_dsh_intentionally(app: &tauri::AppHandle) {
             kill_process_tree(child);
         }
     }
+}
+
+// ===== 升级锁 =====
+// 升级期间统一检查 IS_UPDATING：true 时拦截主窗口关闭 / 托盘退出 / RunEvent::ExitRequested，
+// 防止用户中途退出导致半安装状态（npm 全局包半截、桌面壳更新半下载）。
+// 任何入口（成功 / 失败）都必须在 finally 里 set_updating(false)。
+
+/// 进入升级态。返回 RAII guard，drop 时自动还原（即便中途 panic/早退也安全）。
+struct UpdatingGuard {
+    active: bool,
+}
+impl UpdatingGuard {
+    fn enter() -> Self {
+        IS_UPDATING.store(true, Ordering::SeqCst);
+        Self { active: true }
+    }
+    fn disarm(mut self) {
+        self.active = false;
+        IS_UPDATING.store(false, Ordering::SeqCst);
+    }
+}
+impl Drop for UpdatingGuard {
+    fn drop(&mut self) {
+        if self.active {
+            IS_UPDATING.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+fn is_updating() -> bool {
+    IS_UPDATING.load(Ordering::SeqCst)
 }
 
 /// 进入错误态：记录原因并把主窗口导航回加载页（加载页据此显示原因 + 重试）。
@@ -195,6 +237,12 @@ pub fn run() {
             // 主窗口关闭时隐藏到托盘（应用与 dsh 常驻后台，托盘打开秒开）；
             // 设置窗口关闭则真正销毁，下次打开重新加载。完全退出走托盘「退出」。
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // 升级中：所有窗口（含设置窗口）的关闭都拦截，避免半安装状态。
+                if is_updating() {
+                    api.prevent_close();
+                    let _ = window.emit("update-blocked", "升级进行中，请等待完成");
+                    return;
+                }
                 if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
@@ -204,6 +252,16 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
+            // 系统级退出（macOS Cmd+Q / Linux SIGTERM / Windows 任务管理器结束任务*部分情况）。
+            // 升级中：拦截，防止半安装状态。
+            // 注意：Windows 任务管理器「结束任务」走的是硬杀，无法拦截 —— 这条防线只在能拦的入口生效。
+            if let RunEvent::ExitRequested { api, .. } = &event {
+                if is_updating() {
+                    api.prevent_exit();
+                    let _ = app_handle.emit("update-blocked", "升级进行中，请等待完成");
+                    return;
+                }
+            }
             // 应用退出时回收 dsh 子进程，避免残留后台进程。
             // 走 kill_dsh_intentionally：递增代数，防看门狗在退出竞态窗口里重启 dsh。
             if let RunEvent::Exit = event {
@@ -243,7 +301,14 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 // 通知设置窗口立即执行一次更新检查（窗口可能已存在）。
                 let _ = app.emit("check-update-request", ());
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                // 升级中：拦截托盘退出，避免半安装状态。
+                if is_updating() {
+                    let _ = app.emit("update-blocked", "升级进行中，请等待完成");
+                    return;
+                }
+                app.exit(0);
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -464,6 +529,7 @@ fn spawn_dsh(app: &tauri::AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || match start_dsh(&handle) {
         Some(url) => {
+            eprintln!("[dsh-desktop] dsh 就绪，导航窗口到: {url}");
             if let Some(win) = handle.get_webview_window("main") {
                 if let Ok(parsed) = url::Url::parse(&url) {
                     let _ = win.navigate(parsed);
@@ -604,11 +670,11 @@ fn ensure_shell_plugin(resource_dir: &Path) {
 /// 拉起 dsh 并等待就绪，返回可导航的 Web UI 地址。
 fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
     // 0. 复用优先：若固定端口已有 dsh 服务在跑（说明桌面壳上次未回收、服务常驻后台），
-    //    直接复用，不清理、不重拉，秒开不重载。
+    //    直接复用，不清理、不重拉，秒开不重载。wait_ready 返回带 token 的完整 URL。
     let port_fixed = dsh_port();
-    if wait_ready(port_fixed, Duration::from_secs(1)) {
+    if let Some(url) = wait_ready(port_fixed, Duration::from_secs(1)) {
         eprintln!("[dsh-desktop] 复用已在后台运行的 dsh（{port_fixed}）");
-        return Some(format!("http://127.0.0.1:{port_fixed}"));
+        return Some(url);
     }
     // 否则清理历史残留的 dsh web 实例，保证单实例运行。
     cleanup_stale_dsh();
@@ -666,6 +732,8 @@ fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
     // 使本线程随后收到的 Terminated 被视为「过期事件」而非崩溃（防看门狗与更新流程打架）。
     let generation = DSH_GENERATION.fetch_add(1, Ordering::Relaxed) + 1;
     DSH_LOG_TAIL.lock().unwrap().clear();
+    // 清空上一代可能残留的 Web URL（含 token），避免误用旧进程的地址。
+    *DSH_WEB_URL.lock().unwrap() = None;
     eprintln!("[dsh-desktop] 已拉起 dsh（第 {generation} 代，端口 {port}）");
 
     // 后台消费事件流，避免 stdout 管道满导致 dsh 阻塞；
@@ -680,6 +748,17 @@ fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
                             let line = line.trim();
                             if !line.is_empty() {
                                 eprintln!("[dsh:out] {line}");
+                                // dsh alpha 起把 Web UI 地址（含 token）打在 stdout：
+                                // `dsh web: http://127.0.0.1:<port>/?token=…`。解析出来供
+                                // wait_ready / navigate 用，否则带认证的 dsh 永远 401 进不去。
+                                if let Some(start) = line.find("http://") {
+                                    let tail = &line[start..];
+                                    if let Some(end) = tail.find(|c: char| c.is_whitespace()) {
+                                        *DSH_WEB_URL.lock().unwrap() = Some(tail[..end].to_string());
+                                    } else {
+                                        *DSH_WEB_URL.lock().unwrap() = Some(tail.to_string());
+                                    }
+                                }
                                 push_log_tail(line);
                             }
                         }
@@ -709,9 +788,8 @@ fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
         });
     }
 
-    // 4. 等待本地服务就绪。
-    let url = format!("http://127.0.0.1:{port}");
-    if wait_ready(port, READY_TIMEOUT) {
+    // 4. 等待本地服务就绪。wait_ready 返回带 token 的完整 URL（dsh alpha 起 Web 地址带 token）。
+    if let Some(url) = wait_ready(port, READY_TIMEOUT) {
         *DSH_READY_AT.lock().unwrap() = Some(Instant::now());
         Some(url)
     } else {
@@ -929,6 +1007,7 @@ fn installed_dsh_version(bin: &Path) -> Option<String> {
 
 /// 用内置 node + npm 把指定版本的 dsh 全局安装到 dir 目录。
 /// 保证目录存在；`--ignore-scripts`：dsh 无生命周期脚本，避免任何 cmd 子进程。
+/// 使用 `--json` 让 npm 输出结构化 JSON；解析 `type:"progress"` 事件发到前端画进度条。
 /// 等待安装结束并返回是否成功。
 fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: &str) -> bool {
     if let Err(e) = std::fs::create_dir_all(dir) {
@@ -936,12 +1015,14 @@ fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: 
         return false;
     }
     // 全局安装：-g 且显式 --prefix 指到用户级全局前缀，保证与 dsh CLI 同目录。
+    // `--json`：输出结构化 JSON，用于解析下载/解压进度。
     let args = vec![
         display_path(npm_cli),
         "install".into(),
         "-g".into(),
         "--prefix".into(),
         display_path(dir),
+        "--json".into(),
         format!("@deepseek-ai/dsh@{version}"),
         "--ignore-scripts".into(),
         "--no-audit".into(),
@@ -972,14 +1053,23 @@ fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: 
             Some(CommandEvent::Stdout(bytes)) | Some(CommandEvent::Stderr(bytes)) => {
                 if let Ok(line) = String::from_utf8(bytes) {
                     let line = line.trim();
-                    if !line.is_empty() {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    push_log_tail(line);
+                    // 解析 npm --json 进度事件：{"type":"progress","current":N,"total":M,"package":"...","hint":""}
+                    if let Some((cur, tot)) = parse_npm_json_progress(line) {
+                        let _ = app.emit(
+                            "dsh-install-progress",
+                            UpdateProgress { downloaded: cur, total: tot },
+                        );
+                    } else {
                         eprintln!("[dsh:install] {line}");
-                        push_log_tail(line);
                     }
                 }
             }
             Some(CommandEvent::Error(e)) => eprintln!("[dsh:install] 事件错误: {e}"),
-            Some(_) => {} // CommandEvent 为 #[non_exhaustive]，预留其它事件
+            Some(_) => {}
             None => {
                 eprintln!("[dsh-desktop] npm install 事件流中断");
                 return false;
@@ -988,6 +1078,18 @@ fn run_npm_install(app: &tauri::AppHandle, npm_cli: &Path, dir: &Path, version: 
     }
     eprintln!("[dsh-desktop] npm install 超时（>{INSTALL_TIMEOUT:?}）");
     false
+}
+
+/// 解析 npm --json 输出的一行进度事件。返回 (current, total)。
+/// 仅识别 `{"type":"progress",...}`；其它 JSON 事件（"log"/"info"/...）返回 None。
+fn parse_npm_json_progress(line: &str) -> Option<(u64, u64)> {
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    if v.get("type").and_then(|t| t.as_str()) != Some("progress") {
+        return None;
+    }
+    let cur = v.get("current").and_then(|x| x.as_u64())?;
+    let tot = v.get("total").and_then(|x| x.as_u64()).unwrap_or(0);
+    Some((cur, tot))
 }
 
 /// 去掉 Windows 长路径前缀 `\\?\`，转成普通路径给子进程用。
@@ -1014,21 +1116,40 @@ fn port_free(port: u16) -> bool {
 /// 轮询探测本地服务，直到 HTTP 200（真探活）或超时。
 /// 只测 TCP 可连不够：进程半死（如插件加载失败后端口仍被占但不再响应）会让
 /// 复用/就绪判定误判，窗口导航过去就是空白。HTTP 200 = Web UI 真正可服务。
-fn wait_ready(port: u16, timeout: Duration) -> bool {
-    let url = format!("http://127.0.0.1:{port}/");
+/// 等待 dsh 本地服务就绪。返回能进 Web UI 的完整 URL（可能带 token），未就绪返回 None。
+/// dsh alpha 起根路径不带 token 一律 401；stdout 消费线程把 `dsh web: <url>` 里的
+/// 等待 dsh 本地服务就绪：TCP 可达后，只要 HTTP 层能响应即视为就绪。
+/// 返回能进 Web UI 的完整 URL（可能带 token）。
+///
+/// 关键坑（dsh alpha 起的 token 认证）：带 token 访问 `/?token=…` 返回 **303**，
+/// 重定向到不带 token 的 `/` 并种 HttpOnly cookie；无 cookie 的请求访问 `/` 返回 **401**。
+/// 服务就绪的表现既可能是 200，也可能是 303/401（认证层已就绪）。ureq 2 把非 2xx
+/// 作为 `Err(Error::Status(code, _))` 返回，这里必须同时认 `Ok(200)` 与 `Err(Status(401|303))`，
+/// 否则永远探测不到就绪。画面进入交给 WebView：导航到带 token 的 URL，由浏览器完成 cookie 交换。
+fn wait_ready(port: u16, timeout: Duration) -> Option<String> {
+    let plain = format!("http://127.0.0.1:{port}/");
     let start = Instant::now();
     while start.elapsed() < timeout {
         // TCP 先探一层，避免对未监听端口高频发 HTTP（连接层失败在 Windows 上较慢）。
         if std::net::TcpStream::connect(format!("127.0.0.1:{port}")).is_ok() {
-            if let Ok(resp) = ureq::get(&url).timeout(Duration::from_secs(2)).call() {
-                if resp.status() == 200 {
-                    return true;
+            // 服务是否响应（200/303/401 均表示服务在跑且认证层就绪）。
+            let responsive = |code: u16| code == 200 || code == 303 || code == 401;
+            if let Some(url) = DSH_WEB_URL.lock().unwrap().clone() {
+                match ureq::get(&url).timeout(Duration::from_secs(2)).call() {
+                    Ok(resp) if responsive(resp.status()) => return Some(url),
+                    Err(ureq::Error::Status(code, _)) if responsive(code) => return Some(url),
+                    _ => {}
                 }
+            }
+            match ureq::get(&plain).timeout(Duration::from_secs(2)).call() {
+                Ok(resp) if responsive(resp.status()) => return Some(plain),
+                Err(ureq::Error::Status(code, _)) if responsive(code) => return Some(plain),
+                _ => {}
             }
         }
         std::thread::sleep(POLL_INTERVAL);
     }
-    false
+    None
 }
 
 // ===== 自动更新（tauri-plugin-updater）与 dsh 更新检查 =====
@@ -1042,14 +1163,34 @@ struct AppUpdateInfo {
     body: String,
 }
 
+/// 单条可选版本（前端下拉框的渲染单元）。
+#[derive(Serialize)]
+struct VersionEntry {
+    version: String,
+    /// true = 按 SemVer 后缀规则判定为预发布（前端用黄色渲染）；false = 正式版（绿色）。
+    prerelease: bool,
+    /// 是否为当前安装版本（前端用于「已安装」标记）。
+    is_current: bool,
+    /// 是否为 npm dist-tags 指向（latest/alpha/next...），前端用于标签展示。
+    tags: Vec<String>,
+}
+
 /// dsh 更新信息（查询 npm 官方最新版）。
 #[derive(Serialize)]
 struct DshUpdateInfo {
     has_update: bool,
     current_version: String,
+    /// latest tag（稳定通道）。
     latest_version: String,
+    /// alpha tag（预发布通道）；无该 tag 或与稳定版相同时为 None。
+    prerelease_version: Option<String>,
+    /// 预发布通道名（固定 "alpha"），前端用其渲染标签；None 时前端不显示预发布块。
+    prerelease_kind: Option<String>,
     /// 是否在线方案（无内置 dsh，可一键升级；离线版需重新打包）。
     online: bool,
+    /// npm 上发布的所有版本（semver 倒序），供前端下拉框使用。
+    /// 仅在线方案返回；离线版 npm 网络不通时为空数组。
+    versions: Vec<VersionEntry>,
 }
 
 /// 是否离线方案（resources 里内置了 dsh）。
@@ -1095,6 +1236,7 @@ async fn install_app_update(
     app: tauri::AppHandle,
     window: tauri::WebviewWindow,
 ) -> Result<(), String> {
+    let _guard = UpdatingGuard::enter();
     let updater = app.updater().map_err(|e| format!("初始化更新器失败: {e}"))?;
     let update = updater
         .check()
@@ -1133,18 +1275,57 @@ async fn install_app_update(
     app.restart()
 }
 
-/// 检查官方 dsh（@deepseek-ai/dsh）是否有新版本（查询 npm registry）。
+/// 检查官方 dsh（@deepseek-ai/dsh）是否有新版本（同时取稳定 latest + alpha tag + 全量版本列表）。
 #[tauri::command]
 async fn check_dsh_update(app: tauri::AppHandle) -> Result<DshUpdateInfo, String> {
     let current = current_dsh_version(&app);
-    let latest = tauri::async_runtime::spawn_blocking(fetch_latest_dsh_version)
+    let snap = tauri::async_runtime::spawn_blocking(fetch_npm_version_snapshot)
         .await
         .map_err(|e| format!("查询 npm 失败: {e}"))??;
+    let stable = snap.stable.clone().unwrap_or_default();
+    // 预发布版：与稳定版不同且非空才上报，避免重复提示。
+    let prerelease = snap
+        .prerelease
+        .as_ref()
+        .filter(|v| !v.is_empty() && Some(v.as_str()) != snap.stable.as_deref())
+        .cloned();
+    let prerelease_kind = if prerelease.is_some() { Some("alpha".to_string()) } else { None };
+    let has_update = stable != current || prerelease.as_deref() != Some(current.as_str());
+
+    // 组装版本列表（semver 倒序），并标记每个版本的 dist-tag 与是否为当前。
+    // 仅在线方案返回；离线版 dsh 列表无意义、给空数组。
+    let mut versions: Vec<VersionEntry> = if bundled_dsh_exists(&app) {
+        vec![]
+    } else {
+        snap.versions
+            .iter()
+            .map(|v| {
+                let mut tags: Vec<String> = Vec::new();
+                if Some(v.as_str()) == snap.stable.as_deref() {
+                    tags.push("latest".to_string());
+                }
+                if Some(v.as_str()) == snap.prerelease.as_deref() {
+                    tags.push("alpha".to_string());
+                }
+                VersionEntry {
+                    version: v.clone(),
+                    prerelease: is_prerelease_version(v),
+                    is_current: *v == current,
+                    tags,
+                }
+            })
+            .collect()
+    };
+    versions.sort_by(|a, b| semver_desc_cmp(&a.version, &b.version));
+
     Ok(DshUpdateInfo {
-        has_update: latest != current,
+        has_update,
         current_version: current,
-        latest_version: latest,
+        latest_version: stable,
+        prerelease_version: prerelease,
+        prerelease_kind,
         online: !bundled_dsh_exists(&app),
+        versions,
     })
 }
 
@@ -1180,18 +1361,112 @@ fn get_dsh_version(app: tauri::AppHandle) -> String {
 }
 
 /// 查询 npm 上 @deepseek-ai/dsh 的最新版本号。
-fn fetch_latest_dsh_version() -> Result<String, String> {
-    let resp = ureq::get("https://registry.npmjs.org/@deepseek-ai/dsh/latest")
+/// npm registry 包元数据中与版本相关的最小字段（避免拉整个 document）。
+#[derive(Default)]
+struct NpmVersionSnapshot {
+    /// `latest` tag 指向的版本（稳定通道）。
+    stable: Option<String>,
+    /// `alpha` tag 指向的版本（预发布通道；没有该 tag 时为 None）。
+    prerelease: Option<String>,
+    /// 全部历史版本（未排序，调用方自行 semver 倒序）。
+    versions: Vec<String>,
+}
+
+fn fetch_npm_version_snapshot() -> Result<NpmVersionSnapshot, String> {
+    let resp = ureq::get("https://registry.npmjs.org/@deepseek-ai/dsh")
         .timeout(Duration::from_secs(15))
         .call()
         .map_err(|e| format!("请求 npm registry 失败: {e}"))?;
     let json: serde_json::Value = resp
         .into_json()
         .map_err(|e| format!("解析 npm 返回失败: {e}"))?;
-    json.get("version")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "npm 返回缺少 version 字段".to_string())
+    let mut snap = NpmVersionSnapshot::default();
+    if let Some(tags) = json.get("dist-tags").and_then(|t| t.as_object()) {
+        snap.stable = tags.get("latest").and_then(|v| v.as_str()).map(String::from);
+        snap.prerelease = tags.get("alpha").and_then(|v| v.as_str()).map(String::from);
+    }
+    if let Some(versions) = json.get("versions").and_then(|v| v.as_object()) {
+        snap.versions = versions.keys().cloned().collect();
+    }
+    if snap.stable.is_none() && snap.prerelease.is_none() && snap.versions.is_empty() {
+        return Err("npm 返回缺少 dist-tags / versions".to_string());
+    }
+    Ok(snap)
+}
+
+/// SemVer 预发布后缀判定：含 alpha / beta / pre / canary / rc 任一者即视为预发布。
+/// 参考 SemVer 2.0.0 规则 9 + 11.3：含 pre-release 标识符的版本 < 关联 normal version。
+/// 主流包管理器（npm / cargo / pip）默认不解析 pre-release 范围。
+fn is_prerelease_version(v: &str) -> bool {
+    // 提取首个 '-' 之后的部分（即 pre-release 段），按 '-' 拆分后任一标识符命中即黄。
+    let pre = v.split_once('-').map(|(_, p)| p).unwrap_or("");
+    if pre.is_empty() {
+        return false;
+    }
+    pre.split(|c| c == '-' || c == '.')
+        .any(|seg| {
+            let s = seg.to_ascii_lowercase();
+            s == "alpha" || s == "beta" || s == "pre" || s == "canary" || s == "rc"
+        })
+}
+
+/// SemVer 倒序比较（按 SemVer 2.0.0 规则 11）。含 pre-release 的版本低于 normal version，
+/// pre-release 之间按 ASCII 字典序。
+fn semver_desc_cmp(a: &str, b: &str) -> std::cmp::Ordering {
+    let parse = |v: &str| -> (Vec<u64>, Vec<String>) {
+        let (core, pre) = match v.split_once('-') {
+            Some((c, p)) => (c, p),
+            None => (v, ""),
+        };
+        let nums: Vec<u64> = core
+            .split('.')
+            .filter_map(|s| s.parse::<u64>().ok())
+            .collect();
+        let pre_idents: Vec<String> = if pre.is_empty() {
+            vec![]
+        } else {
+            pre.split('.').map(String::from).collect()
+        };
+        (nums, pre_idents)
+    };
+    let (an, ap) = parse(a);
+    let (bn, bp) = parse(b);
+    // 数字部分按段比较
+    for i in 0..an.len().max(bn.len()) {
+        let ai = an.get(i).copied().unwrap_or(0);
+        let bi = bn.get(i).copied().unwrap_or(0);
+        match ai.cmp(&bi) {
+            std::cmp::Ordering::Equal => continue,
+            ord => return ord.reverse(), // 倒序
+        }
+    }
+    // 数字部分相等时：含 pre-release 的 < normal（规则 11.3），反映到倒序则为 normal > 含 pre-release。
+    // 倒序中 a 更大 → cmp(a, b) 返回 Less。
+    match (ap.is_empty(), bp.is_empty()) {
+        (true, false) => std::cmp::Ordering::Less, // a 是 normal，b 是 pre-release：a 倒序中更大
+        (false, true) => std::cmp::Ordering::Greater, // a 是 pre-release，b 是 normal：a 倒序中更小
+        (true, true) => std::cmp::Ordering::Equal,
+        (false, false) => {
+            // pre-release 之间 ASCII 字典序（规则 11.4），倒序后反向
+            for i in 0..ap.len().max(bp.len()) {
+                let ai = ap.get(i).cloned().unwrap_or_default();
+                let bi = bp.get(i).cloned().unwrap_or_default();
+                match ai.cmp(&bi) {
+                    std::cmp::Ordering::Equal => continue,
+                    ord => return ord.reverse(),
+                }
+            }
+            std::cmp::Ordering::Equal
+        }
+    }
+}
+
+fn fetch_latest_dsh_version() -> Result<String, String> {
+    // 兼容历史调用点：默认取稳定版 latest tag。
+    fetch_npm_version_snapshot()?
+        .stable
+        .or_else(|| fetch_npm_version_snapshot().ok().and_then(|s| s.prerelease))
+        .ok_or_else(|| "npm latest tag 缺失".to_string())
 }
 
 // ===== 在线 dsh 版本检查（只查不装）与手动更新 =====
@@ -1201,6 +1476,7 @@ fn fetch_latest_dsh_version() -> Result<String, String> {
 struct DshVersionInfo {
     current_version: String,
     latest_version: String,
+    prerelease_version: Option<String>,
 }
 
 /// 后台检查 dsh 是否有新版本：只查询不安装，有新版时通过事件 `dsh-update-available` 通知前端。
@@ -1218,15 +1494,25 @@ fn background_check_dsh_version(app: &tauri::AppHandle) {
     }
 
     let current = current_dsh_version(app);
-    match fetch_latest_dsh_version() {
-        Ok(latest) => {
-            if latest != current {
-                eprintln!("[dsh-desktop] 后台检查：dsh 有新版本 v{latest}（当前 v{current}）");
+    match fetch_npm_version_snapshot() {
+        Ok(snap) => {
+            let stable = snap.stable.clone().unwrap_or_default();
+            let prerelease = snap
+                .prerelease
+                .as_ref()
+                .filter(|v| !v.is_empty() && Some(v.as_str()) != snap.stable.as_deref())
+                .cloned();
+            if stable != current || prerelease.as_deref() != Some(current.as_str()) {
+                eprintln!(
+                    "[dsh-desktop] 后台检查：dsh 有新版本 稳定=v{stable} 预发布={:?}（当前 v{current}）",
+                    prerelease
+                );
                 let _ = app.emit(
                     "dsh-update-available",
                     DshVersionInfo {
                         current_version: current,
-                        latest_version: latest,
+                        latest_version: stable,
+                        prerelease_version: prerelease,
                     },
                 );
             }
@@ -1235,13 +1521,37 @@ fn background_check_dsh_version(app: &tauri::AppHandle) {
     }
 }
 
-/// 手动更新在线 dsh：把全局安装的 dsh 升到官方最新版（npm install -g），
+/// 手动更新在线 dsh：把全局安装的 dsh 升到指定版本（npm install -g），
 /// 成功后重启 dsh 进程。失败不影响正在运行的 dsh。返回更新后的版本号。
+/// 参数优先级：`version` 精确版本号 > `channel`（stable/prerelease 走对应 dist-tag）> 默认 stable。
 #[tauri::command]
-async fn update_online_dsh(app: tauri::AppHandle) -> Result<String, String> {
-    let latest = tauri::async_runtime::spawn_blocking(fetch_latest_dsh_version)
-        .await
-        .map_err(|e| format!("查询 npm 失败: {e}"))??;
+async fn update_online_dsh(
+    app: tauri::AppHandle,
+    channel: Option<String>,
+    version: Option<String>,
+) -> Result<String, String> {
+    let _guard = UpdatingGuard::enter();
+    let explicit_version = version.filter(|v| !v.trim().is_empty());
+    let want_prerelease = explicit_version.is_none()
+        && matches!(channel.as_deref(), Some("prerelease") | Some("alpha"));
+    let latest = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        if let Some(v) = explicit_version {
+            // 精确版本号：直接透传，不再查 npm（避免与已选择版本不一致）。
+            return Ok(v);
+        }
+        let snap = fetch_npm_version_snapshot()?;
+        if want_prerelease {
+            snap.prerelease
+                .or(snap.stable)
+                .ok_or_else(|| "npm alpha tag 缺失".to_string())
+        } else {
+            snap.stable
+                .or(snap.prerelease)
+                .ok_or_else(|| "npm latest tag 缺失".to_string())
+        }
+    })
+    .await
+    .map_err(|e| format!("查询 npm 失败: {e}"))??;
 
     let resource_dir = app
         .path()
@@ -1259,7 +1569,13 @@ async fn update_online_dsh(app: tauri::AppHandle) -> Result<String, String> {
     let dir = global_dsh_dir().ok_or_else(|| "无法定位全局 dsh 目录".to_string())?;
     let npm_cli = resource_dir.join("node-runtime/node_modules/npm/bin/npm-cli.js");
 
-    // 1. 全局安装最新版（与终端 dsh CLI 共用同一份，升级后两者同步）。
+    // 1. 先停旧 dsh 进程，再全局安装。
+    //    原因：运行中的 dsh 会占住 `koffi.node`/`sharp.node` 等原生 .node 文件，
+    //    npm 原地替换它们会 EBUSY/EPERM，导致升级半途失败、全局 dsh 依赖树损坏，
+    //    之后每次启动都崩（看门狗连续快速崩溃 → 没画面）。
+    //    必须让 dsh 完全退出释放文件锁后再装；失败则由下方回滚分支重新拉起旧版。
+    kill_dsh_intentionally(&app);
+
     let app2 = app.clone();
     let dir2 = dir.clone();
     let latest2 = latest.clone();
@@ -1269,19 +1585,21 @@ async fn update_online_dsh(app: tauri::AppHandle) -> Result<String, String> {
     .await
     .map_err(|e| format!("安装 dsh 失败: {e}"))?;
     if !ok {
-        return Err("安装 dsh 失败".to_string());
+        eprintln!("[dsh-desktop] dsh 升级失败，回滚：重新拉起当前已安装的全局 dsh");
+        spawn_dsh(&app);
+        return Err("安装 dsh 失败：已在升级前停掉旧实例，现沿用当前版本".to_string());
     }
     // 校验全局安装的版本确实是最新版。
     let bin = global_dsh_bin().ok_or_else(|| "安装完成但找不到全局 dsh 入口".to_string())?;
     if installed_dsh_version(&bin).as_deref() != Some(latest.as_str()) {
-        return Err("安装完成但版本校验失败".to_string());
+        eprintln!("[dsh-desktop] dsh 升级版本校验失败，回滚：重新拉起当前全局 dsh");
+        spawn_dsh(&app);
+        return Err("安装完成但版本校验失败：沿用当前版本".to_string());
     }
 
-    // 2. 重启 dsh：先停旧进程（主动杀，防看门狗误判），再拉起新的。
-    kill_dsh_intentionally(&app);
-
-    // 3. 重新拉起 dsh 并切窗口。
+    // 2. 重新拉起新版本 dsh 并切窗口。
     spawn_dsh(&app);
+    _guard.disarm();
     Ok(latest)
 }
 
@@ -1670,4 +1988,97 @@ fn set_auto_check(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
     let mut prefs = load_prefs(&app);
     prefs.auto_check = enabled;
     save_prefs(&app, &prefs)
+}
+
+#[cfg(test)]
+mod version_selector_tests {
+    use super::*;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn prerelease_detection_by_suffix() {
+        // 含 alpha / beta / pre / canary / rc 任一后缀 → 黄
+        assert!(is_prerelease_version("0.1.2-alpha.3"));
+        assert!(is_prerelease_version("0.1.2-alpha"));
+        assert!(is_prerelease_version("0.1.2-beta.1"));
+        assert!(is_prerelease_version("0.1.2-canary.5"));
+        assert!(is_prerelease_version("0.1.1-rc.2"));
+        assert!(is_prerelease_version("1.0.0-pre"));
+        assert!(is_prerelease_version("0.1.2-alpha-rc.1")); // 复合后缀也命中 rc
+        // 不含 → 绿
+        assert!(!is_prerelease_version("0.1.2"));
+        assert!(!is_prerelease_version("0.1.0"));
+        assert!(!is_prerelease_version("1.0.0"));
+        assert!(!is_prerelease_version("0.0.1"));
+        // 大小写不敏感
+        assert!(is_prerelease_version("0.1.2-ALPHA"));
+        assert!(is_prerelease_version("0.1.2-Rc.1"));
+    }
+
+    #[test]
+    fn semver_desc_ordering() {
+        // 倒序：normal 永远排在含 pre-release 的相同 major.minor.patch 之前
+        // 与 SemVer 2.0.0 规则 11.3 一致（normal > pre-release），反向即为倒序
+        assert_eq!(semver_desc_cmp("1.0.0", "1.0.0-rc.1"), Ordering::Less);
+        assert_eq!(semver_desc_cmp("1.0.0-rc.1", "1.0.0"), Ordering::Greater);
+        // 数字部分 major/minor/patch 倒序
+        assert_eq!(semver_desc_cmp("1.0.0", "0.9.9"), Ordering::Less);
+        assert_eq!(semver_desc_cmp("0.1.1-rc.2", "0.1.0-rc.8"), Ordering::Less);
+        // pre-release 内部按 ASCII 字典序（倒序则反向）
+        assert_eq!(semver_desc_cmp("1.0.0-beta", "1.0.0-alpha"), Ordering::Less);
+        assert_eq!(semver_desc_cmp("1.0.0-rc.1", "1.0.0-beta"), Ordering::Less);
+    }
+
+    #[test]
+    fn full_version_list_sort_matches_npm() {
+        // npm 当前真实版本（与本次查询结果一致）
+        let mut vs = vec![
+            "0.1.1-rc.2",
+            "0.0.1-rc.1",
+            "0.1.0-rc.2",
+            "0.1.2-alpha.3",
+            "0.1.0-rc.7",
+            "1.0.0",
+            "0.0.1-rc.5",
+            "0.1.2-alpha.2",
+        ];
+        vs.sort_by(|a, b| semver_desc_cmp(a, b));
+        // 倒序预期：1.0.0 > 0.1.2-alpha.3 > 0.1.2-alpha.2 > 0.1.1-rc.2 > 0.1.0-rc.7 > 0.1.0-rc.2 > 0.0.1-rc.5 > 0.0.1-rc.1
+        assert_eq!(
+            vs,
+            vec![
+                "1.0.0",
+                "0.1.2-alpha.3",
+                "0.1.2-alpha.2",
+                "0.1.1-rc.2",
+                "0.1.0-rc.7",
+                "0.1.0-rc.2",
+                "0.0.1-rc.5",
+                "0.0.1-rc.1",
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_npm_progress_event_valid() {
+        // 标准 npm --json 进度事件
+        let line = r#"{"type":"progress","current":12345,"total":67890,"package":"@deepseek-ai/dsh","hint":""}"#;
+        assert_eq!(parse_npm_json_progress(line), Some((12345, 67890)));
+    }
+
+    #[test]
+    fn parse_npm_progress_event_no_total() {
+        // npm 偶发不带 total 字段（解压阶段），total 兜底为 0（前端按"未知"处理）
+        let line = r#"{"type":"progress","current":100,"package":"@deepseek-ai/dsh"}"#;
+        assert_eq!(parse_npm_json_progress(line), Some((100, 0)));
+    }
+
+    #[test]
+    fn parse_npm_progress_event_non_progress() {
+        // npm --json 还会输出 "log"/"info"/"error"/"verbose" 等事件；都不应被当成进度
+        assert_eq!(parse_npm_json_progress(r#"{"type":"log","message":"hi"}"#), None);
+        assert_eq!(parse_npm_json_progress(r#"{"type":"info","action":"add"}"#), None);
+        assert_eq!(parse_npm_json_progress(r#"not json"#), None);
+        assert_eq!(parse_npm_json_progress(""), None);
+    }
 }
