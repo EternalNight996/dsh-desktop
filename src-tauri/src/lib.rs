@@ -807,6 +807,33 @@ fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
 
 /// dsh 意外退出（看门狗判定为崩溃）的处理：退避重启；连续 3 次快速崩溃转错误态。
 fn handle_dsh_crash(app: &tauri::AppHandle, code: Option<i32>) {
+    // 0. 尝试自动修复：崩溃根因若是「无法解析 profile bundle」（dsh fail-loud 格式，
+    //    常见于 bundles 登记了插件但依赖未安装/被损坏），直接从 bundles 移除该坏条目并重启，
+    //    不再等用户手动点「自动修复」。
+    //    remove_bundle_entries 成功后该条目已不存在，后续崩溃日志不会再提取到同名插件，
+    //    天然防空转死循环；提取到但移除失败则照常走下方退避/错误态。
+    let crash_tail = take_log_tail(LOG_TAIL_LINES);
+    let bad_plugins = extract_bad_bundle_plugins(&crash_tail);
+    if !bad_plugins.is_empty() {
+        match remove_bundle_entries(&bad_plugins) {
+            Ok(removed) => {
+                eprintln!(
+                    "[dsh-desktop] 检测到崩溃根因为无法解析 profile bundle：{bad_plugins:?}，已自动从 bundles 移除 {removed} 条并重启"
+                );
+                DSH_CRASHES.store(0, Ordering::Relaxed);
+                *DSH_READY_AT.lock().unwrap() = None;
+                // 主动杀（含递增代数），避免旧事件流把这次替换误判为崩溃；随后重启。
+                kill_dsh_intentionally(app);
+                std::thread::sleep(Duration::from_millis(500));
+                spawn_dsh(app);
+                return;
+            }
+            Err(e) => {
+                eprintln!("[dsh-desktop] 提取到坏插件 {bad_plugins:?} 但自动移除失败: {e}，走常规退避");
+            }
+        }
+    }
+
     let stable = DSH_READY_AT
         .lock().unwrap()
         .map(|at| at.elapsed() >= STABLE_UPTIME)
@@ -865,37 +892,94 @@ fn retry_dsh_start(app: tauri::AppHandle) {
     spawn_dsh(&app);
 }
 
-/// 从 dsh profile 的 `dsh.profile.bundles` 中移除指定插件条目，然后重启 dsh。
-/// 等效于手工编辑 `~/.dsh/profiles/web/package.json` 去掉坏插件再重启——
-/// dsh 加载 profile 时跳过不在 bundles 里的条目，不再 fail-loud。
-#[tauri::command]
-async fn remove_plugin_bundles(app: tauri::AppHandle, plugins: Vec<String>) -> Result<(), String> {
-    eprintln!("[dsh-desktop] 移除插件: {plugins:?}");
-    // profile web 的 package.json 在 ~/.dsh/profiles/web/。
+/// 定位 dsh 主 profile（web）的 package.json 路径。
+fn dsh_profile_pkg_path() -> Result<PathBuf, String> {
     let home = std::env::var("USERPROFILE")
         .map(PathBuf::from)
         .or_else(|_| std::env::var("HOME").map(PathBuf::from))
         .map_err(|_| "无法定位用户目录".to_string())?;
-    let profile_pkg = home.join(".dsh/profiles/web/package.json");
+    Ok(home.join(".dsh/profiles/web/package.json"))
+}
+
+/// 从 dsh profile 的 `dsh.profile.bundles` 数组中精确移除指定插件条目（serde_json 改写）。
+/// 只动 bundles 数组，不动 dependencies，避免误删同名依赖。返回实际移除的条目数。
+fn remove_bundle_entries(plugins: &[String]) -> Result<usize, String> {
+    let profile_pkg = dsh_profile_pkg_path()?;
     if !profile_pkg.exists() {
         return Err("profile package.json 不存在".into());
     }
     let text = std::fs::read_to_string(&profile_pkg)
         .map_err(|e| format!("读取 package.json 失败: {e}"))?;
-    let mut lines: Vec<String> = text.lines().map(String::from).collect();
+    let (out, removed) = remove_bundle_entries_from(&text, plugins)?;
+    std::fs::write(&profile_pkg, out)
+        .map_err(|e| format!("写入 package.json 失败: {e}"))?;
+    Ok(removed)
+}
+
+/// 文本级：在 package.json 的 `dsh.profile.bundles` 数组中精确移除指定插件条目。
+/// 只动 bundles 数组，不动 dependencies；找不到任何目标条目时报错（防止空写）。
+/// 返回（新文本, 实际移除数）。抽成纯函数便于单测。
+fn remove_bundle_entries_from(text: &str, plugins: &[String]) -> Result<(String, usize), String> {
+    let mut json: serde_json::Value = serde_json::from_str(text)
+        .map_err(|e| format!("解析 package.json 失败: {e}"))?;
+    let Some(bundles) = json
+        .pointer_mut("/dsh/profile/bundles")
+        .and_then(|b| b.as_array_mut())
+    else {
+        return Err("profile package.json 缺少 dsh.profile.bundles".into());
+    };
     let mut removed = 0usize;
-    for plugin in &plugins {
-        let needle = format!("\"{plugin}\"");
-        let before = lines.len();
-        lines.retain(|line| !line.contains(&needle));
-        if lines.len() < before { removed += 1; }
-    }
+    bundles.retain(|v| {
+        if let Some(name) = v.as_str() {
+            if plugins.iter().any(|p| p == name) {
+                removed += 1;
+                return false;
+            }
+        }
+        true
+    });
     if removed == 0 {
         return Err("未在 bundles 中找到指定插件".into());
     }
-    let new_text = lines.join("\n");
-    std::fs::write(&profile_pkg, &new_text)
-        .map_err(|e| format!("写入 package.json 失败: {e}"))?;
+    let mut out = serde_json::to_string_pretty(&json)
+        .map_err(|e| format!("序列化 package.json 失败: {e}"))?;
+    out.push('\n');
+    Ok((out, removed))
+}
+
+/// 从崩溃日志尾提取 fail-loud 的「无法解析 profile bundle」插件名。
+/// 匹配 dsh 的错误格式：`cannot resolve profile bundle "agent-teams-pixel"`。
+/// 返回插件名列表（去重）。
+fn extract_bad_bundle_plugins(tail: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let needle = "cannot resolve profile bundle ";
+    let mut rest = tail;
+    while let Some(pos) = rest.find(needle) {
+        let after = &rest[pos + needle.len()..];
+        // 后面应是 `"name"`；
+        let quoted = after.trim_start();
+        if let Some(stripped) = quoted.strip_prefix('"') {
+            // 取到下一个未转义 `"` 为止。
+            let end = stripped.find('"').unwrap_or(stripped.len());
+            let name = &stripped[..end];
+            if !name.is_empty() && !out.iter().any(|x| x == name) {
+                out.push(name.to_string());
+            }
+            rest = &stripped[end..];
+        } else {
+            break;
+        }
+    }
+    out
+}
+
+/// 手动入口：从 dsh profile 的 `dsh.profile.bundles` 中移除指定插件条目，然后重启 dsh。
+/// 等效于手工编辑 `~/.dsh/profiles/web/package.json` 去掉坏插件再重启——
+/// dsh 加载 profile 时跳过不在 bundles 里的条目，不再 fail-loud。
+#[tauri::command]
+async fn remove_plugin_bundles(app: tauri::AppHandle, plugins: Vec<String>) -> Result<(), String> {
+    eprintln!("[dsh-desktop] 移除插件: {plugins:?}");
+    let removed = remove_bundle_entries(&plugins)?;
     eprintln!("[dsh-desktop] 已移除 {removed} 个插件条目，重启 dsh");
 
     // 重启：走看门狗路径，避免与更新流程打架。
@@ -2302,26 +2386,88 @@ mod version_selector_tests {
         );
     }
 
+}
+
+#[cfg(test)]
+mod bundle_repair_tests {
+    use super::{extract_bad_bundle_plugins, remove_bundle_entries_from};
+
+    /// 模拟真实 `~/.dsh/profiles/web/package.json` 的结构（含 agent-teams-pixel 坏条目）。
+    const SAMPLE_PKG: &str = r#"{
+  "name": "dsh-profile-web",
+  "private": true,
+  "dependencies": {
+    "@eternalnight/dsh-theme": "git+https://github.com/EternalNight996/dsh-theme.git",
+    "dsh-ui-three-body": "^0.2.10",
+    "memory-eternal": "^0.1.0"
+  },
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dshmarket",
+        "memory-eternal",
+        "agent-teams-pixel"
+      ]
+    }
+  }
+}"#;
+
     #[test]
-    fn parse_npm_progress_event_valid() {
-        // 标准 npm --json 进度事件
-        let line = r#"{"type":"progress","current":12345,"total":67890,"package":"@deepseek-ai/dsh","hint":""}"#;
-        assert_eq!(parse_npm_json_progress(line), Some((12345, 67890)));
+    fn removes_exact_bundle_entry_only() {
+        // 只删 bundles 里的目标条目：dependencies 里的同名/相似名依赖不受影响；
+        // 其余 bundle 条目保留且顺序不变。
+        let plugins = vec!["agent-teams-pixel".to_string()];
+        let (out, removed) = remove_bundle_entries_from(SAMPLE_PKG, &plugins).unwrap();
+        assert_eq!(removed, 1);
+        assert!(!out.contains("agent-teams-pixel"));
+        for keep in ["@deepseek-ai/dsh-base", "dshmarket", "memory-eternal"] {
+            assert!(out.contains(keep), "不应误删 {keep}");
+        }
+        // 序列化结果仍是合法 JSON，且 dependencies 完整保留。
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(parsed.pointer("/dependencies/memory-eternal").is_some());
     }
 
     #[test]
-    fn parse_npm_progress_event_no_total() {
-        // npm 偶发不带 total 字段（解压阶段），total 兜底为 0（前端按"未知"处理）
-        let line = r#"{"type":"progress","current":100,"package":"@deepseek-ai/dsh"}"#;
-        assert_eq!(parse_npm_json_progress(line), Some((100, 0)));
+    fn errors_when_target_absent() {
+        // 目标条目本就不存在时报错，避免空写文件。
+        let plugins = vec!["no-such-plugin".to_string()];
+        assert!(remove_bundle_entries_from(SAMPLE_PKG, &plugins).is_err());
     }
 
     #[test]
-    fn parse_npm_progress_event_non_progress() {
-        // npm --json 还会输出 "log"/"info"/"error"/"verbose" 等事件；都不应被当成进度
-        assert_eq!(parse_npm_json_progress(r#"{"type":"log","message":"hi"}"#), None);
-        assert_eq!(parse_npm_json_progress(r#"{"type":"info","action":"add"}"#), None);
-        assert_eq!(parse_npm_json_progress(r#"not json"#), None);
-        assert_eq!(parse_npm_json_progress(""), None);
+    fn errors_when_bundles_missing() {
+        // 结构异常（无 dsh.profile.bundles）时报错而不是 panic。
+        let plugins = vec!["agent-teams-pixel".to_string()];
+        assert!(remove_bundle_entries_from(r#"{"name":"x"}"#, &plugins).is_err());
+        assert!(remove_bundle_entries_from("not json", &plugins).is_err());
+    }
+
+    #[test]
+    fn extracts_single_bundle_name_from_crash_log() {
+        // 复现用户实测崩溃日志 error 行格式：`Error: dsh: cannot resolve profile bundle "agent-teams-pixel" ...`
+        let tail = r#"file:///.../dsh-app-boot/lib/index.js:831
+Error: dsh: cannot resolve profile bundle "agent-teams-pixel" from the dsh installation or C:\Users\...\.dsh\profiles\web; run 'dsh plugin --profile web install' if its dependency is not installed
+    at resolveBundleDir (file:///.../lib/index.js:831:8)"#;
+        assert_eq!(extract_bad_bundle_plugins(tail), vec!["agent-teams-pixel"]);
+    }
+
+    #[test]
+    fn extracts_scoped_name_and_dedupes() {
+        // 同时出现多次同名插件（多行堆栈）只返回一项；scoped 包名也能解析。
+        let tail = r#"
+Error: dsh: cannot resolve profile bundle "@scope/foo" from ...
+Error: dsh: cannot resolve profile bundle "@scope/foo" from ...
+Error: dsh: cannot resolve profile bundle "plain" from ..."#;
+        assert_eq!(extract_bad_bundle_plugins(tail), vec!["@scope/foo", "plain"]);
+    }
+
+    #[test]
+    fn returns_empty_when_no_bundle_error() {
+        // 非「无法解析 bundle」的崩溃（如激活失败、端口占用）不应被自动修复误处理。
+        assert!(extract_bad_bundle_plugins("fatal load failure\nplugin did not activate: x").is_empty());
+        assert!(extract_bad_bundle_plugins("").is_empty());
     }
 }
