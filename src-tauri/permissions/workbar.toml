@@ -25,6 +25,16 @@ description = "Allows installing desktop-shell update."
 commands.allow = ["install_app_update"]
 
 [[permission]]
+identifier = "allow-list-app-versions"
+description = "Allows listing all published desktop-shell versions (multi-version picker)."
+commands.allow = ["list_app_versions"]
+
+[[permission]]
+identifier = "allow-install-app-version"
+description = "Allows installing a specific desktop-shell version with signature verification."
+commands.allow = ["install_app_version"]
+
+[[permission]]
 identifier = "allow-check-dsh-update"
 description = "Allows checking the dsh engine update."
 commands.allow = ["check_dsh_update"]
@@ -38,6 +48,16 @@ commands.allow = ["update_online_dsh"]
 identifier = "allow-get-dsh-version"
 description = "Allows reading the current dsh version."
 commands.allow = ["get_dsh_version"]
+
+[[permission]]
+identifier = "allow-get-dsh-cli-status"
+description = "Allows reading the terminal dsh CLI path resolution status."
+commands.allow = ["get_dsh_cli_status"]
+
+[[permission]]
+identifier = "allow-unify-dsh-cli"
+description = "Allows unifying the terminal dsh command to the desktop-shell-managed copy."
+commands.allow = ["unify_dsh_cli"]
 
 [[permission]]
 identifier = "allow-update-prompt-pref"

@@ -167,14 +167,17 @@
         width: 0%;
       }
       #updating-mask[data-mode="indeterminate"] .progress-fill {
-        width: 35%;
-        animation: progress-indet 1.4s ease-in-out infinite;
+        width: 50%;
+        animation: progress-indet 1.4s linear infinite;
         background: linear-gradient(90deg, #38bdf8, #818cf8);
       }
+      /* 真正"永在容器内"的脉动：50% 宽 fill 用 translateX(-50%) → 150% 横移；
+         整周期内 fill 的 50% 至少有一段在容器内可见，肉眼看是"持续滑过容器"。
+         linear 是关键 — 之前 ease-in-out 让条在两端减速、中间瞬闪，
+         加上 fill width 仅 35% → 体感"条消失 1.4s"。 */
       @keyframes progress-indet {
-        0%   { transform: translateX(-100%); }
-        50%  { transform: translateX(180%); }
-        100% { transform: translateX(180%); }
+        0%   { transform: translateX(-50%); }
+        100% { transform: translateX(150%); }
       }
       #updating-mask .progress-text {
         font-size: 11px;
@@ -691,8 +694,14 @@
           if (v.is_current) opt.classList.add('v-current');
           dshVersionSelect.appendChild(opt);
         }
-        const idx = versions.findIndex((v) => v.is_current);
-        const selected = idx >= 0 ? idx : 0;
+        // 默认选中优先级：npm `latest` tag → `alpha` tag → 当前已装版本 → 列表第一项。
+        // 旧逻辑只看 `is_current`，会把已装的旧 alpha（如下拉里 0.1.2-alpha.4）
+        // 盖过官方 `latest`（0.1.2-rc.1），导致按钮默认置灰成「已是当前版本」，
+        // 用户以为「更新不到指定版本」。这里改用 dist-tag 优先级代替"已装即默认"。
+        let selected = versions.findIndex((v) => v.tags.includes('latest'));
+        if (selected < 0) selected = versions.findIndex((v) => v.tags.includes('alpha'));
+        if (selected < 0) selected = versions.findIndex((v) => v.is_current);
+        if (selected < 0) selected = 0;
         dshVersionSelect.selectedIndex = selected;
         updateStabilityBadge(versions[selected]);
         syncInstallButtonState(versions[selected]);
@@ -835,18 +844,49 @@
             ? { version: opts.version }
             : { channel: opts.channel || 'stable' };
           // 监听 npm install 进度事件；install_app_update 用同 payload 但不同事件名
+          // 后端 dsh 安装：total=0 + downloaded=已下载包数（npm http fetch 计数）。
+          // npm 不预先透露总包数，前端用「定时器主推 + 事件加速」伪百分比：
+          // 90s 定时器主推 + 0.96 倍真实包数当下界（实时事件触发时只推不拉）
+          // 上限 99%（最后 1% 留给 reify/校验收尾）保证不会卡死或越过。
           if (tauriEvent && !window.__dshProgressHooked) {
+            const progressState = { pct: 0, lastN: 0, timer: null, startN: 100 };
+            const stepMs = 250;
+            const targetSeconds = 90;
+            const stepPerTick = 99 / ((targetSeconds * 1000) / stepMs);
+            progressState.timer = setInterval(() => {
+              if (progressState.pct >= 99) {
+                clearInterval(progressState.timer);
+                progressState.timer = null;
+                return;
+              }
+              progressState.pct = Math.min(99, progressState.pct + stepPerTick);
+              const disp = Math.floor(progressState.pct);
+              applyProgress(disp, 100);
+              const n = progressState.lastN;
+              updatingProgressText.textContent = n > 0
+                ? '正在下载依赖… 已下载 ' + n + ' 个包 · ' + disp + '%'
+                : '正在下载依赖… ' + disp + '%';
+            }, stepMs);
             await tauriEvent.listen('dsh-install-progress', (ev) => {
               const p = ev.payload || {};
-              // 后端对 dsh 安装发 total=0 + downloaded=已下载包数（npm http fetch 计数）。
-              // 用 indeterminate 动画 + 「已下载 N 个依赖」文案，不用字节格式化。
-              updatingMask.dataset.mode = 'indeterminate';
               const n = p.downloaded || 0;
-              updatingProgressText.textContent = n > 0
-                ? '正在下载依赖… 已下载 ' + n + ' 个包'
-                : '正在下载依赖…';
+              progressState.lastN = n;
+              // 真实包数 → 百分比下界；只推不拉（不允许回退到比当前小）。
+              const realPct = Math.min(99, Math.round((n / progressState.startN) * 96));
+              if (realPct > progressState.pct) progressState.pct = realPct;
+              const disp = Math.floor(progressState.pct);
+              applyProgress(disp, 100);
+              updatingProgressText.textContent = '正在下载依赖… 已下载 ' + n + ' 个包 · ' + disp + '%';
             });
             window.__dshProgressHooked = true;
+            window.__dshProgressCleanup = () => {
+              if (progressState.timer) clearInterval(progressState.timer);
+              progressState.timer = null;
+              progressState.pct = 0;
+              progressState.lastN = 0;
+              window.__dshProgressHooked = false;
+              window.__dshProgressCleanup = null;
+            };
           }
           const v = await tauriCore.invoke('update_online_dsh', args);
           document.getElementById('dsh-cur').textContent = 'v' + v;

@@ -237,6 +237,13 @@ A：不会。默认**最小化到托盘**、dsh 服务随桌面壳一并常驻�
 - **v0.2.x**：终端 dsh 命令路径自动统一；统一 `dsh` 命令替换 `npx`；自动更新 + 设置窗口实战打磨
 - **v0.1.x**：首个 Tauri 2 桌面壳 + 离线 / 在线两套打包方案
 
+
+## 🔧 v0.8.0 修复
+
+- **dsh 引擎版本下拉默认选中错乱**：已装旧 alpha（如 0.1.2-alpha.4）+ 官方 latest 是更新预发布版本（如 0.1.2-rc.1）时，下拉默认选中已装版本，按钮置灰成「已是当前版本」，用户以为「更新不到指定版本」。改为按 dist-tag 优先级（latest → alpha → 当前已装）默认选中，按钮直接可用。
+- **dsh 安装进度条不真实**：原进度条只显示「已下载 N 个包」、条本身几何脉动让用户感觉「不动」。改为前端伪百分比：90s 定时器主推到 99% 停下，事件触发时按真实包数 ×0.96 当下界保证不被定时器「超车」，99% 留缓冲给 reify/integrity。
+- **Tauri 2 capabilities/permissions 同步**：v0.7.0 加的多版本下拉与终端 dsh 命令统一 4 个新命令（list_app_versions / install_app_version / get_dsh_cli_status / unify_dsh_cli）补齐对应 permission 注册。
+
 详细版本见 [GitHub Releases](https://github.com/EternalNight996/dsh-desktop/releases)。
 
 ---
