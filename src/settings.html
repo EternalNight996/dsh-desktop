@@ -404,75 +404,75 @@
   </head>
   <body>
     <div class="wrap">
-      <h1>设置 · 更新配置</h1>
+      <h1 data-i18n="docH1">设置 · 更新配置</h1>
 
       <div class="card">
-        <h2>通用</h2>
+        <h2 data-i18n="secGeneral">通用</h2>
         <label class="switch-row">
           <input type="checkbox" id="auto-check" />
-          启动时自动检查更新并提醒
+          <span data-i18n="autoCheckLabel">启动时自动检查更新并提醒</span>
         </label>
-        <p class="hint">关闭后启动不再自动弹窗提醒；仍可从托盘「更新配置」或本页手动更新。</p>
+        <p class="hint" data-i18n="autoCheckHint">关闭后启动不再自动弹窗提醒；仍可从托盘「更新配置」或本页手动更新。</p>
       </div>
 
       <div class="card">
-        <h2>桌面壳更新</h2>
-        <div class="row"><span>当前版本</span><b id="app-cur">—</b></div>
-        <div class="row"><span>最新版本（GitHub/Gitee）</span><b id="app-latest">—</b></div>
+        <h2 data-i18n="secApp">桌面壳更新</h2>
+        <div class="row"><span data-i18n="curVersion">当前版本</span><b id="app-cur">—</b></div>
+        <div class="row"><span data-i18n="appLatest">最新版本（GitHub/Gitee）</span><b id="app-latest">—</b></div>
         <div id="app-version-picker" class="version-picker" hidden>
           <select id="app-version-select" size="1"></select>
-          <button id="btn-app-install-version" class="primary install-version-btn" hidden>安装所选版本</button>
-          <span id="app-version-stability" class="version-stability s-stable">稳定</span>
+          <button id="btn-app-install-version" class="primary install-version-btn" hidden data-i18n="installSelected">安装所选版本</button>
+          <span id="app-version-stability" class="version-stability s-stable" data-i18n="stable">稳定</span>
         </div>
         <div class="actions">
-          <button id="btn-check">检查 desktop 更新</button>
-          <button id="btn-install" class="primary" hidden>更新到最新</button>
+          <button id="btn-check" data-i18n="btnCheckApp">检查 desktop 更新</button>
+          <button id="btn-install" class="primary" hidden data-i18n="updateToLatest">更新到最新</button>
         </div>
         <div class="status" id="app-status"></div>
         <p class="hint" id="app-hint"></p>
       </div>
 
       <div class="card">
-        <h2>更新 dsh</h2>
-        <div class="row"><span>当前版本</span><b id="dsh-cur">—</b></div>
-        <div class="row"><span>官方最新（latest tag）</span><b id="dsh-latest">—</b></div>
+        <h2 data-i18n="secDsh">更新 dsh</h2>
+        <div class="row"><span data-i18n="curVersion">当前版本</span><b id="dsh-cur">—</b></div>
+        <div class="row"><span data-i18n="dshLatest">官方最新（latest tag）</span><b id="dsh-latest">—</b></div>
         <div class="row prerelease" id="dsh-prerelease-row" hidden>
-          <span>预发布版 <span class="tag-alpha" id="dsh-prerelease-tag">alpha</span></span>
+          <span><span data-i18n="preRelease">预发布版</span> <span class="tag-alpha" id="dsh-prerelease-tag">alpha</span></span>
           <b id="dsh-prerelease">—</b>
         </div>
         <div id="dsh-version-picker" class="version-picker" hidden>
           <select id="dsh-version-select" size="1"></select>
-          <button id="btn-dsh-install-version" class="primary install-version-btn" hidden>安装所选版本</button>
-          <span id="dsh-version-stability" class="version-stability s-stable">稳定</span>
+          <button id="btn-dsh-install-version" class="primary install-version-btn" hidden data-i18n="installSelected">安装所选版本</button>
+          <span id="dsh-version-stability" class="version-stability s-stable" data-i18n="stable">稳定</span>
         </div>
-        <div class="row"><span>终端 dsh 命令</span><b id="cli-dsh-path">—</b></div>
+        <div class="row"><span data-i18n="cliDshCmd">终端 dsh 命令</span><b id="cli-dsh-path">—</b></div>
         <div class="status" id="dsh-status"></div>
         <div class="status" id="cli-status"></div>
         <div class="actions">
-          <button id="btn-dsh-check">更新 dsh</button>
-          <button id="btn-dsh-upgrade" class="primary" hidden>升级到稳定版</button>
-          <button id="btn-cli-unify" hidden>统一终端 dsh</button>
+          <button id="btn-dsh-check" data-i18n="btnUpdateDsh">更新 dsh</button>
+          <button id="btn-dsh-upgrade" class="primary" hidden data-i18n="upgradeStable">升级到稳定版</button>
+          <button id="btn-cli-unify" hidden data-i18n="btnUnifyCli">统一终端 dsh</button>
         </div>
         <p class="hint" id="dsh-hint"></p>
       </div>
 
       <div class="card">
-        <h2>关于</h2>
-        <div class="row"><span>应用版本</span><b id="app-version">—</b></div>
-        <div class="row"><span>dsh 运行方式</span><b id="dsh-mode">—</b></div>
+        <h2 data-i18n="secAbout">关于</h2>
+        <div class="row"><span data-i18n="appVersionRow">应用版本</span><b id="app-version">—</b></div>
+        <div class="row"><span data-i18n="dshModeRow">dsh 运行方式</span><b id="dsh-mode">—</b></div>
       </div>
     </div>
 
     <!-- 更新提醒弹窗 -->
     <div id="update-dialog" hidden>
       <div class="dlg-card">
-        <h3><span class="dlg-badge"></span>发现新版本</h3>
+        <h3><span class="dlg-badge"></span><span data-i18n="dlgTitle">发现新版本</span></h3>
         <p id="dlg-desc"></p>
-        <label class="dlg-skip"><input type="checkbox" id="dlg-skip-check" />下次启动不再提醒此版本</label>
+        <label class="dlg-skip"><input type="checkbox" id="dlg-skip-check" /><span data-i18n="dlgSkip">下次启动不再提醒此版本</span></label>
         <div class="dlg-status" id="dlg-status"></div>
         <div class="dlg-actions">
-          <button id="dlg-later">稍后</button>
-          <button id="dlg-install" class="primary">立即更新</button>
+          <button id="dlg-later" data-i18n="later">稍后</button>
+          <button id="dlg-install" class="primary" data-i18n="installNow">立即更新</button>
         </div>
       </div>
     </div>
@@ -481,10 +481,10 @@
     <div id="updating-mask" data-mode="indeterminate">
       <div class="panel">
         <div class="spinner"></div>
-        <div class="title" id="updating-title">升级进行中</div>
-        <div class="desc" id="updating-desc">请勿关闭窗口或退出应用，完成后会自动继续。</div>
+        <div class="title" id="updating-title" data-i18n="maskTitle">升级进行中</div>
+        <div class="desc" id="updating-desc" data-i18n="maskDesc">请勿关闭窗口或退出应用，完成后会自动继续。</div>
         <div class="progress-track"><div class="progress-fill" id="updating-fill"></div></div>
-        <div class="progress-text" id="updating-progress-text">准备中…</div>
+        <div class="progress-text" id="updating-progress-text" data-i18n="preparing">准备中…</div>
       </div>
     </div>
 
@@ -493,6 +493,195 @@
       const tauriCore = window.__TAURI__ && window.__TAURI__.core;
       const tauriEvent = window.__TAURI__ && window.__TAURI__.event;
       const tauriApp = window.__TAURI__ && window.__TAURI__.app;
+
+      // ===== i18n：跟随 dsh 系统语言 =====
+      // 真源 ~/.dsh/settings.yaml → locale.preference（经 get_ui_locale 命令实时读取）。
+      // 静态节点标 data-i18n，动态文案走 t()；窗口每次打开重建时读取，dsh 里切语言重开即跟随。
+      const I18N = {
+        zh: {
+          docTitle: '设置 · DeepSeek Harness',
+          docH1: '设置 · 更新配置',
+          secGeneral: '通用',
+          autoCheckLabel: '启动时自动检查更新并提醒',
+          autoCheckHint: '关闭后启动不再自动弹窗提醒；仍可从托盘「更新配置」或本页手动更新。',
+          secApp: '桌面壳更新',
+          curVersion: '当前版本',
+          appLatest: '最新版本（GitHub/Gitee）',
+          installSelected: '安装所选版本',
+          stable: '稳定',
+          btnCheckApp: '检查 desktop 更新',
+          updateToLatest: '更新到最新',
+          secDsh: '更新 dsh',
+          dshLatest: '官方最新（latest tag）',
+          preRelease: '预发布版',
+          cliDshCmd: '终端 dsh 命令',
+          btnUpdateDsh: '更新 dsh',
+          upgradeStable: '升级到稳定版',
+          btnUnifyCli: '统一终端 dsh',
+          secAbout: '关于',
+          appVersionRow: '应用版本',
+          dshModeRow: 'dsh 运行方式',
+          dlgTitle: '发现新版本',
+          dlgSkip: '下次启动不再提醒此版本',
+          later: '稍后',
+          installNow: '立即更新',
+          maskTitle: '升级进行中',
+          maskDesc: '请勿关闭窗口或退出应用，完成后会自动继续。',
+          preparing: '准备中…',
+          downloadedSoFar: '已下载 {0}…',
+          envNoUpdate: '当前环境不支持更新配置',
+          checking: '检查更新中…',
+          foundNew: '发现新版本 v{0}（当前 v{1}）',
+          upToDateV: '已是最新版本（v{0}）',
+          appHintVersions: '绿色=稳定 / 黄色=预发布 / ◆蓝色=当前已装；选版本后点「安装所选版本」（下载+签名校验通过才安装）。',
+          versionListFail: '无法拉取版本列表：{0}',
+          checkFail: '检查更新失败：{0}',
+          installingApp: '正在安装 desktop v{0}',
+          installingAppDesc: '请在签名校验通过后按提示安装，期间请勿关闭窗口。',
+          downloading: '下载中…',
+          downloadingVerifying: '正在下载并校验 v{0}…',
+          installerLaunched: '安装器已启动（签名校验通过）。安装完成后会自动重启到新版本。',
+          installVerFail: '安装 v{0} 失败：{1}',
+          updatingApp: '正在更新 desktop',
+          dontClose: '请勿关闭窗口或退出应用，完成后会自动重启。',
+          prepareDownload: '准备下载…',
+          downloadingUpdate: '正在下载更新…',
+          downloadingUpdatePct: '正在下载更新… {0}%',
+          updateFail: '更新失败：{0}',
+          alreadyCurrent: '已是当前版本',
+          currentVersion: '当前版本',
+          curInstalledMark: '  ★ 当前已装',
+          kindPre: '（预发布）',
+          kindStable: '（稳定）',
+          pre: '预发布',
+          modeOnline: '在线（全局安装）',
+          modeOffline: '离线（安装包内置）',
+          dshHintOnline: '在线方案：dsh 装在全局 npm 前缀（与终端 dsh 命令同源）。下方下拉可选任意版本（绿=正式 / 黄=预发布 / 蓝=当前已装），点右侧「安装所选版本」一键安装；快速通道「升级到稳定版」一键到 latest tag。',
+          dshHintOffline: '离线版内置 dsh，升级需维护者 just update 后重新打包发布。',
+          upgradeStableV: '升级到稳定版 v{0}',
+          bothNewer: '稳定 v{0} 与预发布 v{1} 均高于当前',
+          hasNew: '有新版可升级（v{0}）',
+          preAvailable: '预发布版 v{0} 可用（alpha，可能不稳定）',
+          upToDate: '已是最新版本',
+          officialNewer: '官方已有新版 {0}，等待新版安装包发布',
+          checkDshFail: '检查 dsh 失败：{0}',
+          updatingDsh: '更新 dsh 中…',
+          upgradingDsh: '正在升级 dsh',
+          toVersion: '到 v{0}',
+          toStableV: '到稳定版 v{0}',
+          upgradeDshDesc: '请勿关闭窗口或退出应用，下载并安装依赖需要数十秒到数分钟。',
+          needsDownload: '…（需下载依赖，请稍候）',
+          depsN: '正在下载依赖… 已下载 {0} 个包 · {1}%',
+          depsPct: '正在下载依赖… {0}%',
+          dshUpgraded: 'dsh 已升级到 v{0}，正在重启引擎…',
+          dshUpgradeFail: '升级 dsh 失败：{0}',
+          notFound: '未找到',
+          cliMissing: '终端里没有 dsh 命令，点下方按钮自动加入 PATH',
+          cliForeign: '终端 dsh 指向了另一份副本（与桌面壳不同源、版本会漂移），点下方按钮统一',
+          unifying: '统一中…（如弹管理员授权请允许）',
+          unifyFail: '统一失败：{0}',
+          dlgDesc: '当前版本 <b>v{0}</b>，发现新版本 <b>v{1}</b>，是否立即更新？',
+          selIsCurrent: '所选版本 v{0} 已是当前安装版本',
+        },
+        en: {
+          docTitle: 'Settings · DeepSeek Harness',
+          docH1: 'Settings · Update',
+          secGeneral: 'General',
+          autoCheckLabel: 'Check for updates on startup and notify',
+          autoCheckHint: 'When off, startup no longer shows the update prompt; you can still update from the tray "Check for Updates" or this page.',
+          secApp: 'Desktop Shell Update',
+          curVersion: 'Current version',
+          appLatest: 'Latest (GitHub/Gitee)',
+          installSelected: 'Install selected',
+          stable: 'Stable',
+          btnCheckApp: 'Check desktop updates',
+          updateToLatest: 'Update to latest',
+          secDsh: 'Update dsh',
+          dshLatest: 'Official latest (latest tag)',
+          preRelease: 'Pre-release',
+          cliDshCmd: 'Terminal dsh command',
+          btnUpdateDsh: 'Update dsh',
+          upgradeStable: 'Upgrade to stable',
+          btnUnifyCli: 'Unify terminal dsh',
+          secAbout: 'About',
+          appVersionRow: 'App version',
+          dshModeRow: 'dsh run mode',
+          dlgTitle: 'New version available',
+          dlgSkip: "Don't remind me about this version again",
+          later: 'Later',
+          installNow: 'Update now',
+          maskTitle: 'Update in progress',
+          maskDesc: 'Do not close the window or quit the app; it will resume automatically when finished.',
+          preparing: 'Preparing…',
+          downloadedSoFar: 'Downloaded {0}…',
+          envNoUpdate: 'Updates are not supported in this environment',
+          checking: 'Checking for updates…',
+          foundNew: 'New version v{0} available (current v{1})',
+          upToDateV: 'Already up to date (v{0})',
+          appHintVersions: 'Green=stable / Yellow=pre-release / ◆Blue=installed; select a version and click "Install selected" (installs only after download + signature verification).',
+          versionListFail: 'Failed to fetch version list: {0}',
+          checkFail: 'Update check failed: {0}',
+          installingApp: 'Installing desktop v{0}',
+          installingAppDesc: 'After the signature check passes, follow the installer prompts. Do not close this window.',
+          downloading: 'Downloading…',
+          downloadingVerifying: 'Downloading and verifying v{0}…',
+          installerLaunched: 'Installer launched (signature verified). The app restarts into the new version after installation.',
+          installVerFail: 'Failed to install v{0}: {1}',
+          updatingApp: 'Updating desktop',
+          dontClose: 'Do not close the window or quit the app; it restarts automatically when finished.',
+          prepareDownload: 'Preparing download…',
+          downloadingUpdate: 'Downloading update…',
+          downloadingUpdatePct: 'Downloading update… {0}%',
+          updateFail: 'Update failed: {0}',
+          alreadyCurrent: 'Already installed',
+          currentVersion: 'Installed',
+          curInstalledMark: '  ★ installed',
+          kindPre: ' (pre-release)',
+          kindStable: ' (stable)',
+          pre: 'Pre-release',
+          modeOnline: 'Online (global install)',
+          modeOffline: 'Offline (bundled)',
+          dshHintOnline: 'Online mode: dsh lives in the global npm prefix (same source as the terminal dsh command). Pick any version below (green=stable / yellow=pre-release / blue=installed) and click "Install selected"; the quick lane "Upgrade to stable" jumps to the latest tag.',
+          dshHintOffline: 'The offline build bundles dsh; upgrading requires the maintainer to run "just update" and re-package.',
+          upgradeStableV: 'Upgrade to stable v{0}',
+          bothNewer: 'Stable v{0} and pre-release v{1} are both newer than current',
+          hasNew: 'New version available (v{0})',
+          preAvailable: 'Pre-release v{0} available (alpha, may be unstable)',
+          upToDate: 'Already up to date',
+          officialNewer: 'New official release {0} available; waiting for the new installer',
+          checkDshFail: 'dsh check failed: {0}',
+          updatingDsh: 'Updating dsh…',
+          upgradingDsh: 'Upgrading dsh',
+          toVersion: 'to v{0}',
+          toStableV: 'to stable v{0}',
+          upgradeDshDesc: 'Do not close the window or quit the app; downloading and installing dependencies takes from tens of seconds to a few minutes.',
+          needsDownload: '… (downloading dependencies, please wait)',
+          depsN: 'Downloading dependencies… {0} packages · {1}%',
+          depsPct: 'Downloading dependencies… {0}%',
+          dshUpgraded: 'dsh upgraded to v{0}; restarting the engine…',
+          dshUpgradeFail: 'dsh upgrade failed: {0}',
+          notFound: 'Not found',
+          cliMissing: 'No dsh command in the terminal; click the button below to add it to PATH',
+          cliForeign: 'Terminal dsh points to another copy (different source, versions may drift); click the button below to unify',
+          unifying: 'Unifying… (approve the admin prompt if it appears)',
+          unifyFail: 'Unify failed: {0}',
+          dlgDesc: 'Current version <b>v{0}</b>, new version <b>v{1}</b> available. Update now?',
+          selIsCurrent: 'Selected v{0} is already the installed version',
+        },
+      };
+      let LANG = 'zh';
+      function t(key, ...args) {
+        const dict = I18N[LANG] || I18N.zh;
+        let s = dict[key] !== undefined ? dict[key] : I18N.zh[key];
+        if (s === undefined) return key;
+        args.forEach((a, i) => { s = s.split('{' + i + '}').join(String(a)); });
+        return s;
+      }
+      function applyStatic() {
+        document.title = t('docTitle');
+        document.documentElement.lang = LANG === 'en' ? 'en' : 'zh-CN';
+        document.querySelectorAll('[data-i18n]').forEach((el) => { el.textContent = t(el.getAttribute('data-i18n')); });
+      }
 
       // 升级遮罩：升级期间显示，配合后端 IS_UPDATING 拦截关闭。
       const updatingMask = document.getElementById('updating-mask');
@@ -514,8 +703,8 @@
         if (!total || total === 0) {
           updatingMask.dataset.mode = 'indeterminate';
           updatingProgressText.textContent = downloaded > 0
-            ? '已下载 ' + fmtBytes(downloaded) + '…'
-            : '准备中…';
+            ? t('downloadedSoFar', fmtBytes(downloaded))
+            : t('preparing');
         } else {
           updatingMask.dataset.mode = 'determinate';
           const pct = Math.min(100, Math.round((downloaded / total) * 100));
@@ -526,7 +715,7 @@
       function resetProgress(label) {
         updatingMask.dataset.mode = 'indeterminate';
         updatingFill.style.width = '0%';
-        updatingProgressText.textContent = label || '准备中…';
+        updatingProgressText.textContent = label || t('preparing');
       }
       function showUpdatingMask(title, desc, label) {
         if (title) updatingTitle.textContent = title;
@@ -571,9 +760,9 @@
 
       // ---- 桌面壳更新 ----
       async function checkUpdate() {
-        if (!tauriCore) { setAppStatus('当前环境不支持更新配置'); return; }
+        if (!tauriCore) { setAppStatus(t('envNoUpdate')); return; }
         btnCheck.disabled = true;
-        setAppStatus('更新配置中…');
+        setAppStatus(t('checking'));
         try {
           const info = await tauriCore.invoke('check_app_update');
           appCurEl.textContent = 'v' + info.current_version;
@@ -581,7 +770,7 @@
             updateAvailable = true;
             btnInstall.hidden = false;
             appLatestEl.textContent = 'v' + info.latest_version;
-            setAppStatus('发现新版本 v' + info.latest_version + '（当前 v' + info.current_version + '）');
+            setAppStatus(t('foundNew', info.latest_version, info.current_version));
             // 弹出是否更新（勾选过"下次不提醒"的版本不再弹）。
             try {
               const skip = await tauriCore.invoke('get_update_prompt_pref');
@@ -590,14 +779,14 @@
           } else {
             btnInstall.hidden = true;
             appLatestEl.textContent = 'v' + info.latest_version;
-            setAppStatus('已是最新版本（v' + info.current_version + '）');
+            setAppStatus(t('upToDateV', info.current_version));
           }
           // 列桌面壳全部已发布版本，填充多版本下拉。
           try {
             const versions = await tauriCore.invoke('list_app_versions');
             if (Array.isArray(versions) && versions.length > 0) {
               renderAppVersionPicker(versions, info.current_version);
-              appHint.textContent = '绿色=稳定 / 黄色=预发布 / ◆蓝色=当前已装；选版本后点「安装所选版本」（下载+签名校验通过才安装）。';
+              appHint.textContent = t('appHintVersions');
             } else {
               appVersionPicker.hidden = true;
               btnAppInstallVer.hidden = true;
@@ -605,10 +794,10 @@
           } catch (ev) {
             appVersionPicker.hidden = true;
             btnAppInstallVer.hidden = true;
-            appHint.textContent = '无法拉取版本列表：' + ev;
+            appHint.textContent = t('versionListFail', ev);
           }
         } catch (e) {
-          setAppStatus('检查更新失败：' + e);
+          setAppStatus(t('checkFail', e));
         } finally {
           btnCheck.disabled = false;
         }
@@ -619,17 +808,17 @@
         if (!ver) return;
         btnAppInstallVer.disabled = true;
         btnCheck.disabled = true;
-        showUpdatingMask('正在安装 desktop v' + ver, '请在签名校验通过后按提示安装，期间请勿关闭窗口。', '下载中…');
-        setAppStatus('正在下载并校验 v' + ver + '…');
+        showUpdatingMask(t('installingApp', ver), t('installingAppDesc'), t('downloading'));
+        setAppStatus(t('downloadingVerifying', ver));
         try {
           await tauriCore.invoke('install_app_version', { version: ver });
           hideUpdatingMask();
-          appHint.textContent = '安装器已启动（签名校验通过）。安装完成后会自动重启到新版本。';
+          appHint.textContent = t('installerLaunched');
           // 之后刷新版本列表（可能装的是旧版本，改回当前）。
           try { const vs = await tauriCore.invoke('list_app_versions'); const info = await tauriCore.invoke('get_dsh_version').catch(()=>null); } catch (_) {}
         } catch (e) {
           hideUpdatingMask();
-          setAppStatus('安装 v' + ver + ' 失败：' + e);
+          setAppStatus(t('installVerFail', ver, e));
           btnAppInstallVer.disabled = false;
           btnCheck.disabled = false;
         }
@@ -638,22 +827,22 @@
       async function installUpdate() {
         btnInstall.disabled = true;
         btnCheck.disabled = true;
-        showUpdatingMask('正在更新 desktop', '请勿关闭窗口或退出应用，完成后会自动重启。', '准备下载…');
-        setAppStatus('正在下载更新…');
+        showUpdatingMask(t('updatingApp'), t('dontClose'), t('prepareDownload'));
+        setAppStatus(t('downloadingUpdate'));
         try {
           if (tauriEvent) {
             await tauriEvent.listen('update-progress', (ev) => {
               const p = ev.payload || {};
               applyProgress(p.downloaded || 0, p.total || 0);
               const pct = p.total ? Math.round((p.downloaded / p.total) * 100) : 0;
-              setAppStatus('正在下载更新… ' + pct + '%');
+              setAppStatus(t('downloadingUpdatePct', pct));
             });
           }
           await tauriCore.invoke('install_app_update');
           // 正常不会走到这里：安装完成后应用会自动重启。
         } catch (e) {
           hideUpdatingMask();
-          setAppStatus('更新失败：' + e);
+          setAppStatus(t('updateFail', e));
           btnInstall.disabled = false;
           btnCheck.disabled = false;
           dlgInstall.disabled = false;
@@ -667,15 +856,15 @@
       function syncInstallButtonState(v) {
         if (!v) {
           btnDshInstallVer.disabled = true;
-          btnDshInstallVer.textContent = '安装所选版本';
+          btnDshInstallVer.textContent = t('installSelected');
           return;
         }
         if (v.is_current) {
           btnDshInstallVer.disabled = true;
-          btnDshInstallVer.textContent = '已是当前版本';
+          btnDshInstallVer.textContent = t('alreadyCurrent');
         } else {
           btnDshInstallVer.disabled = false;
-          btnDshInstallVer.textContent = '安装所选版本';
+          btnDshInstallVer.textContent = t('installSelected');
         }
       }
 
@@ -685,8 +874,8 @@
           const opt = document.createElement('option');
           opt.value = v.version;
           const tagSuffix = v.tags.length ? ' [' + v.tags.join(',') + ']' : '';
-          const currentMark = v.is_current ? '  ★ 当前已装' : '';
-          const kindLabel = v.prerelease ? '（预发布）' : '（稳定）';
+          const currentMark = v.is_current ? t('curInstalledMark') : '';
+          const kindLabel = v.prerelease ? t('kindPre') : t('kindStable');
           // 文本前缀用方块符号给当前项加视觉强标（原生 option 不支持伪元素，文本前缀最稳）
           const prefix = v.is_current ? '◆ ' : '   ';
           opt.textContent = prefix + 'v' + v.version + tagSuffix + kindLabel + currentMark;
@@ -715,8 +904,8 @@
         for (const v of versions) {
           const opt = document.createElement('option');
           opt.value = v.version;
-          const currentMark = v.is_current ? '  ★ 当前已装' : '';
-          const kindLabel = v.prerelease ? '（预发布）' : '（稳定）';
+          const currentMark = v.is_current ? t('curInstalledMark') : '';
+          const kindLabel = v.prerelease ? t('kindPre') : t('kindStable');
           const prefix = v.is_current ? '◆ ' : '   ';
           opt.textContent = prefix + 'v' + v.version + kindLabel + currentMark;
           opt.className = v.prerelease ? 'v-pre' : 'v-stable';
@@ -738,14 +927,14 @@
           appVersionStability.className = 'version-stability';
           return;
         }
-        appVersionStability.textContent = v.prerelease ? '预发布' : '稳定';
+        appVersionStability.textContent = v.prerelease ? t('pre') : t('stable');
         appVersionStability.className = 'version-stability ' + (v.prerelease ? 's-pre' : 's-stable');
       }
 
       function syncAppInstallButtonState(v) {
         if (!v) return;
         btnAppInstallVer.disabled = v.is_current;
-        btnAppInstallVer.textContent = v.is_current ? '当前版本' : '安装所选版本';
+        btnAppInstallVer.textContent = v.is_current ? t('currentVersion') : t('installSelected');
       }
 
       function updateStabilityBadge(v) {
@@ -754,14 +943,14 @@
           dshVersionStability.className = 'version-stability';
           return;
         }
-        dshVersionStability.textContent = v.prerelease ? '预发布' : '稳定';
+        dshVersionStability.textContent = v.prerelease ? t('pre') : t('stable');
         dshVersionStability.className = 'version-stability ' + (v.prerelease ? 's-pre' : 's-stable');
       }
 
       async function checkDsh() {
-        if (!tauriCore) { setDshStatus('当前环境不支持更新配置'); return; }
+        if (!tauriCore) { setDshStatus(t('envNoUpdate')); return; }
         btnDshCheck.disabled = true;
-        setDshStatus('更新 dsh 中…');
+        setDshStatus(t('updatingDsh'));
         btnDshUpgrade.hidden = true;
         btnDshInstallVer.hidden = true;
         dshVersionPicker.hidden = true;
@@ -787,35 +976,35 @@
           const stableNewer = info.latest_version && info.latest_version !== info.current_version;
           const preNewer = preVersion && preVersion !== info.current_version;
           if (info.online) {
-            modeEl.textContent = '在线（全局安装）';
-            dshHint.textContent = '在线方案：dsh 装在全局 npm 前缀（与终端 dsh 命令同源）。下方下拉可选任意版本（绿=正式 / 黄=预发布 / 蓝=当前已装），点右侧「安装所选版本」一键安装；快速通道「升级到稳定版」一键到 latest tag。';
+            modeEl.textContent = t('modeOnline');
+            dshHint.textContent = t('dshHintOnline');
             if (stableNewer) {
               btnDshUpgrade.hidden = false;
-              btnDshUpgrade.textContent = '升级到稳定版 v' + info.latest_version;
+              btnDshUpgrade.textContent = t('upgradeStableV', info.latest_version);
             }
             if (stableNewer && preNewer) {
-              setDshStatus('稳定 v' + info.latest_version + ' 与预发布 v' + preVersion + ' 均高于当前');
+              setDshStatus(t('bothNewer', info.latest_version, preVersion));
             } else if (stableNewer) {
-              setDshStatus('有新版可升级（v' + info.latest_version + '）');
+              setDshStatus(t('hasNew', info.latest_version));
             } else if (preNewer) {
-              setDshStatus('预发布版 v' + preVersion + ' 可用（alpha，可能不稳定）');
+              setDshStatus(t('preAvailable', preVersion));
             } else {
-              setDshStatus('已是最新版本');
+              setDshStatus(t('upToDate'));
             }
           } else {
-            modeEl.textContent = '离线（安装包内置）';
-            dshHint.textContent = '离线版内置 dsh，升级需维护者 just update 后重新打包发布。';
+            modeEl.textContent = t('modeOffline');
+            dshHint.textContent = t('dshHintOffline');
             if (stableNewer || preNewer) {
               const parts = [];
-              if (stableNewer) parts.push('稳定 v' + info.latest_version);
-              if (preNewer) parts.push('预发布 v' + preVersion);
-              setDshStatus('官方已有新版 ' + parts.join(' / ') + '，等待新版安装包发布');
+              if (stableNewer) parts.push(t('stable') + ' v' + info.latest_version);
+              if (preNewer) parts.push(t('pre') + ' v' + preVersion);
+              setDshStatus(t('officialNewer', parts.join(' / ')));
             } else {
-              setDshStatus('已是最新版本');
+              setDshStatus(t('upToDate'));
             }
           }
         } catch (e) {
-          setDshStatus('检查 dsh 失败：' + e);
+          setDshStatus(t('checkDshFail', e));
         } finally {
           btnDshCheck.disabled = false;
         }
@@ -829,16 +1018,16 @@
         btnDshUpgrade.disabled = true;
         btnDshInstallVer.disabled = true;
         btnDshCheck.disabled = true;
-        let title = '正在升级 dsh';
+        let title = t('upgradingDsh');
         let targetLabel = '';
-        if (isByVersion) targetLabel = '到 v' + opts.version;
-        else targetLabel = '到稳定版 v' + (opts.latest_version || '');
+        if (isByVersion) targetLabel = t('toVersion', opts.version);
+        else targetLabel = t('toStableV', opts.latest_version || '');
         showUpdatingMask(
           title + ' ' + targetLabel,
-          '请勿关闭窗口或退出应用，下载并安装依赖需要数十秒到数分钟。',
-          '准备下载…'
+          t('upgradeDshDesc'),
+          t('prepareDownload')
         );
-        setDshStatus(title + ' ' + targetLabel + '…（需下载依赖，请稍候）');
+        setDshStatus(title + ' ' + targetLabel + t('needsDownload'));
         try {
           const args = isByVersion
             ? { version: opts.version }
@@ -864,8 +1053,8 @@
               applyProgress(disp, 100);
               const n = progressState.lastN;
               updatingProgressText.textContent = n > 0
-                ? '正在下载依赖… 已下载 ' + n + ' 个包 · ' + disp + '%'
-                : '正在下载依赖… ' + disp + '%';
+                ? t('depsN', n, disp)
+                : t('depsPct', disp);
             }, stepMs);
             await tauriEvent.listen('dsh-install-progress', (ev) => {
               const p = ev.payload || {};
@@ -876,7 +1065,7 @@
               if (realPct > progressState.pct) progressState.pct = realPct;
               const disp = Math.floor(progressState.pct);
               applyProgress(disp, 100);
-              updatingProgressText.textContent = '正在下载依赖… 已下载 ' + n + ' 个包 · ' + disp + '%';
+              updatingProgressText.textContent = t('depsN', n, disp);
             });
             window.__dshProgressHooked = true;
             window.__dshProgressCleanup = () => {
@@ -892,12 +1081,12 @@
           document.getElementById('dsh-cur').textContent = 'v' + v;
           document.getElementById('dsh-latest').textContent = 'v' + v;
           hideUpdatingMask();
-          setDshStatus('dsh 已升级到 v' + v + '，正在重启引擎…');
+          setDshStatus(t('dshUpgraded', v));
           // 重新拉一次版本列表刷新「已安装」标记
           await checkDsh();
         } catch (e) {
           hideUpdatingMask();
-          setDshStatus('升级 dsh 失败：' + e);
+          setDshStatus(t('dshUpgradeFail', e));
           btn.disabled = false;
           btnDshUpgrade.disabled = false;
           btnDshInstallVer.disabled = false;
@@ -911,17 +1100,17 @@
       const btnCliUnify = document.getElementById('btn-cli-unify');
       function renderCliStatus(s) {
         if (!s) return;
-        cliPathEl.textContent = s.terminal_path || '未找到';
+        cliPathEl.textContent = s.terminal_path || t('notFound');
         if (s.unified) {
           cliStatusEl.textContent = '';
           btnCliUnify.hidden = true;
           cliPathEl.style.color = '';
         } else if (s.kind === 'missing') {
-          cliStatusEl.textContent = '终端里没有 dsh 命令，点下方按钮自动加入 PATH';
+          cliStatusEl.textContent = t('cliMissing');
           btnCliUnify.hidden = false;
           cliPathEl.style.color = '#c0392b';
         } else {
-          cliStatusEl.textContent = '终端 dsh 指向了另一份副本（与桌面壳不同源、版本会漂移），点下方按钮统一';
+          cliStatusEl.textContent = t('cliForeign');
           btnCliUnify.hidden = false;
           cliPathEl.style.color = '#c0392b';
         }
@@ -933,13 +1122,13 @@
       async function unifyCli() {
         if (!tauriCore) return;
         btnCliUnify.disabled = true;
-        cliStatusEl.textContent = '统一中…（如弹管理员授权请允许）';
+        cliStatusEl.textContent = t('unifying');
         try {
           const msg = await tauriCore.invoke('unify_dsh_cli');
           cliStatusEl.textContent = msg;
           await refreshCli();
         } catch (e) {
-          cliStatusEl.textContent = '统一失败：' + e;
+          cliStatusEl.textContent = t('unifyFail', e);
         } finally {
           btnCliUnify.disabled = false;
         }
@@ -951,8 +1140,7 @@
         dlgSkipCheck.checked = false;
         dlgStatus.textContent = '';
         dlgInstall.disabled = false;
-        document.getElementById('dlg-desc').innerHTML =
-          '当前版本 <b>v' + info.current_version + '</b>，发现新版本 <b>v' + info.latest_version + '</b>，是否立即更新？';
+        document.getElementById('dlg-desc').innerHTML = t('dlgDesc', info.current_version, info.latest_version);
         dlg.hidden = false;
       }
       function hideUpdateDialog() { dlg.hidden = true; pendingUpdate = null; }
@@ -971,74 +1159,86 @@
         hideUpdateDialog();
       }
 
-      window.addEventListener('DOMContentLoaded', () => {
-        if (tauriApp) {
-          tauriApp.getVersion().then((v) => {
-            document.getElementById('app-version').textContent = 'v' + v;
-          }).catch(() => {});
-        }
-        if (tauriCore) {
-          tauriCore.invoke('get_auto_check').then((v) => { autoCheck.checked = !!v; }).catch(() => {});
-          tauriCore.invoke('get_dsh_version').then((v) => {
-            if (v && v !== '未知') document.getElementById('dsh-cur').textContent = 'v' + v;
-          }).catch(() => {});
-        }
-        autoCheck.addEventListener('change', () => {
-          if (tauriCore) tauriCore.invoke('set_auto_check', { enabled: autoCheck.checked }).catch(() => {});
-        });
-        btnCheck.addEventListener('click', checkUpdate);
-        btnInstall.addEventListener('click', installUpdate);
-        btnAppInstallVer.addEventListener('click', installAppVersion);
-        appVersionSelect.addEventListener('change', () => {
-          const opt = appVersionSelect.options[appVersionSelect.selectedIndex];
-          appUpdateStabilityBadge(opt ? { prerelease: opt.classList.contains('v-pre') } : null);
-          syncAppInstallButtonState({ is_current: !!(opt && opt.classList.contains('v-current')) });
-        });
-        btnDshCheck.addEventListener('click', checkDsh);
-        btnDshUpgrade.addEventListener('click', () => upgradeDsh({ channel: 'stable' }));
-        btnDshInstallVer.addEventListener('click', () => {
-          const opt = dshVersionSelect.options[dshVersionSelect.selectedIndex];
-          // 兜底：即便按钮 enabled 状态被绕过，选的是当前版本就不触发升级
-          if (opt && opt.classList.contains('v-current')) {
-            setDshStatus('所选版本 v' + dshVersionSelect.value + ' 已是当前安装版本');
-            return;
+        window.addEventListener('DOMContentLoaded', () => {
+          const boot = () => {
+            applyStatic();
+            if (tauriApp) {
+              tauriApp.getVersion().then((v) => {
+                document.getElementById('app-version').textContent = 'v' + v;
+              }).catch(() => {});
+            }
+            if (tauriCore) {
+              tauriCore.invoke('get_auto_check').then((v) => { autoCheck.checked = !!v; }).catch(() => {});
+              tauriCore.invoke('get_dsh_version').then((v) => {
+                if (v && v !== '未知') document.getElementById('dsh-cur').textContent = 'v' + v;
+              }).catch(() => {});
+            }
+            autoCheck.addEventListener('change', () => {
+              if (tauriCore) tauriCore.invoke('set_auto_check', { enabled: autoCheck.checked }).catch(() => {});
+            });
+            btnCheck.addEventListener('click', checkUpdate);
+            btnInstall.addEventListener('click', installUpdate);
+            btnAppInstallVer.addEventListener('click', installAppVersion);
+            appVersionSelect.addEventListener('change', () => {
+              const opt = appVersionSelect.options[appVersionSelect.selectedIndex];
+              appUpdateStabilityBadge(opt ? { prerelease: opt.classList.contains('v-pre') } : null);
+              syncAppInstallButtonState({ is_current: !!(opt && opt.classList.contains('v-current')) });
+            });
+            btnDshCheck.addEventListener('click', checkDsh);
+            btnDshUpgrade.addEventListener('click', () => upgradeDsh({ channel: 'stable' }));
+            btnDshInstallVer.addEventListener('click', () => {
+              const opt = dshVersionSelect.options[dshVersionSelect.selectedIndex];
+              // 兜底：即便按钮 enabled 状态被绕过，选的是当前版本就不触发升级
+              if (opt && opt.classList.contains('v-current')) {
+                setDshStatus(t('selIsCurrent', dshVersionSelect.value));
+                return;
+              }
+              const sel = dshVersionSelect.value;
+              if (!sel) return;
+              upgradeDsh({ version: sel });
+            });
+            // 下拉选择变化时更新右侧稳定性徽章
+            dshVersionSelect.addEventListener('change', () => {
+              const opt = dshVersionSelect.options[dshVersionSelect.selectedIndex];
+              const pre = opt && opt.classList.contains('v-pre');
+              const isCurrent = opt && opt.classList.contains('v-current');
+              dshVersionStability.textContent = pre ? t('pre') : t('stable');
+              dshVersionStability.className = 'version-stability ' + (pre ? 's-pre' : 's-stable');
+              // 当前已装的版本：按钮置灰、文案改「已是当前版本」，防止重复安装
+              syncInstallButtonState({ is_current: !!isCurrent, prerelease: !!pre });
+            });
+            btnCliUnify.addEventListener('click', unifyCli);
+            dlgInstall.addEventListener('click', dialogInstall);
+            dlgLater.addEventListener('click', dialogLater);
+            if (tauriEvent) {
+              // 托盘「更新配置」：立即执行一次检查。
+              tauriEvent.listen('check-update-request', () => checkUpdate());
+              // 后台 dsh 版本检查结果：刷新 dsh 引擎区块。
+              tauriEvent.listen('dsh-update-available', () => checkDsh());
+              // 后台终端 dsh 统一结果：刷新状态行。
+              tauriEvent.listen('dsh-cli-status', (e) => renderCliStatus(e.payload));
+              // 后端拦截关闭/退出（升级中）：给用户提示。
+              tauriEvent.listen('update-blocked', (e) => {
+                const msg = (e && e.payload) || t('maskDesc');
+                setAppStatus(String(msg));
+                setDshStatus(String(msg));
+              });
+            }
+            // 打开即检查：桌面壳 + dsh + 终端路径。
+            checkUpdate();
+            checkDsh();
+            refreshCli();
+          };
+          // 先定语言（读 dsh 系统配置）再做首次渲染；读不到按 zh。
+          if (tauriCore) {
+            tauriCore.invoke('get_ui_locale')
+              .then((l) => { LANG = l === 'en' ? 'en' : 'zh'; })
+              .catch(() => {})
+              .finally(boot);
+          } else {
+            boot();
           }
-          const sel = dshVersionSelect.value;
-          if (!sel) return;
-          upgradeDsh({ version: sel });
         });
-        // 下拉选择变化时更新右侧稳定性徽章
-        dshVersionSelect.addEventListener('change', () => {
-          const opt = dshVersionSelect.options[dshVersionSelect.selectedIndex];
-          const pre = opt && opt.classList.contains('v-pre');
-          const isCurrent = opt && opt.classList.contains('v-current');
-          dshVersionStability.textContent = pre ? '预发布' : '稳定';
-          dshVersionStability.className = 'version-stability ' + (pre ? 's-pre' : 's-stable');
-          // 当前已装的版本：按钮置灰、文案改「已是当前版本」，防止重复安装
-          syncInstallButtonState({ is_current: !!isCurrent, prerelease: !!pre });
-        });
-        btnCliUnify.addEventListener('click', unifyCli);
-        dlgInstall.addEventListener('click', dialogInstall);
-        dlgLater.addEventListener('click', dialogLater);
-        if (tauriEvent) {
-          // 托盘「更新配置」：立即执行一次检查。
-          tauriEvent.listen('check-update-request', () => checkUpdate());
-          // 后台 dsh 版本检查结果：刷新 dsh 引擎区块。
-          tauriEvent.listen('dsh-update-available', () => checkDsh());
-          // 后台终端 dsh 统一结果：刷新状态行。
-          tauriEvent.listen('dsh-cli-status', (e) => renderCliStatus(e.payload));
-          // 后端拦截关闭/退出（升级中）：给用户提示。
-          tauriEvent.listen('update-blocked', (e) => {
-            const msg = (e && e.payload) || '升级进行中，请等待完成';
-            setAppStatus(String(msg));
-            setDshStatus(String(msg));
-          });
-        }
-        // 打开即检查：桌面壳 + dsh + 终端路径。
-        checkUpdate();
-        checkDsh();
-        refreshCli();
-      });
     </script>
   </body>
 </html>

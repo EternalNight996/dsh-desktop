@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-shell",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "dsh-desktop 桌面壳客户端插件：把「更新设置」按钮挂到 DSH 侧边栏底部（sidebar.footer.action 官方槽位），点击打开桌面壳设置窗口。机制与 memory-eternal 的「记忆」按钮一致。",
   "license": "MIT",
   "type": "module",

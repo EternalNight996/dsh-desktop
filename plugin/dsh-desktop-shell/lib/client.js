@@ -9,10 +9,24 @@ window.__ModuleLoader__.load({
     // sidebar.footer.action（dsh-client-ui-sidebar 渲染在侧边栏底部，
     // props.wide 区分展开/折叠 rail），永不错位、自动跟随 dsh 主题。
     // 点击经 Tauri IPC 打开桌面壳设置窗口；浏览器直开时无 Tauri 环境，静默。
+    //
+    // i18n：照搬 @eternalnight/dsh-theme 的模式——ctx.locale 注册词典 +
+    // bind 拿 t()，槽位 label 带 locale: NS；dsh 里切换中英，按钮实时跟随。
     var React = require('react');
 
     var NS = 'dsh-desktop-shell';
-    var TITLE = '更新设置：检查并更新 dsh 与 dsh-desktop';
+    var ZH = {
+      nav: '更新设置',
+      title: '更新设置：检查并更新 dsh 与 dsh-desktop',
+      sectionDesc: '检查并更新 dsh 内核与 dsh-desktop 桌面壳。更新由桌面壳统一管理：后台检查版本、一键升级、签名安装包。',
+      openSettings: '打开更新设置',
+    };
+    var EN = {
+      nav: 'Update Settings',
+      title: 'Update Settings: check and update dsh & dsh-desktop',
+      sectionDesc: 'Check and update the dsh engine and the dsh-desktop shell. Updates are managed by the desktop shell: background checks, one-click upgrades, signed installers.',
+      openSettings: 'Open update settings',
+    };
 
     var CSS = ''
       + '/* footerActions 直接包含或隔一层 wrapper 都允许换行（:has 在 WebView2/Chromium 均支持） */\n'
@@ -44,12 +58,13 @@ window.__ModuleLoader__.load({
 
     function openShellSettings() {
       try {
-        var t = window.__TAURI_INTERNALS__;
-        if (t && t.invoke) t.invoke('open_settings');
+        var tauri = window.__TAURI_INTERNALS__;
+        if (tauri && tauri.invoke) tauri.invoke('open_settings');
       } catch (_) {}
     }
 
     function FooterButton(props) {
+      var t = props.t;
       var wide = !(props && props.wide === false);
       return React.createElement(
         'div',
@@ -57,37 +72,42 @@ window.__ModuleLoader__.load({
         React.createElement('style', null, CSS),
         React.createElement(
           'button',
-          { type: 'button', className: 'dsd-footer-btn', onClick: openShellSettings, 'aria-label': '更新设置', title: TITLE },
+          { type: 'button', className: 'dsd-footer-btn', onClick: openShellSettings, 'aria-label': t('nav'), title: t('title') },
           React.createElement('span', { className: 'dsd-footer-ico' }, React.createElement(RefreshIcon, null)),
-          React.createElement('span', { className: 'dsd-footer-label' }, '更新设置'),
+          React.createElement('span', { className: 'dsd-footer-label' }, t('nav')),
         ),
       );
     }
 
     // 设置页 → 更新设置 面板：说明 + 打开桌面壳设置窗口按钮。
-    function SettingsSection() {
+    function SettingsSection(props) {
+      var t = props.t;
       return React.createElement(
         'div',
         { className: 'dsd-section' },
         React.createElement('style', null, CSS),
-        React.createElement('h3', null, '更新设置'),
-        React.createElement('p', null, '检查并更新 dsh 内核与 dsh-desktop 桌面壳。更新由桌面壳统一管理：后台检查版本、一键升级、签名安装包。'),
-        React.createElement('button', { type: 'button', className: 'dsd-footer-btn dsd-section-btn', onClick: openShellSettings }, '打开更新设置'),
+        React.createElement('h3', null, t('nav')),
+        React.createElement('p', null, t('sectionDesc')),
+        React.createElement('button', { type: 'button', className: 'dsd-footer-btn dsd-section-btn', onClick: openShellSettings }, t('openSettings')),
       );
     }
 
-    var inject = ['settingsScope', 'slots'];
+    var inject = ['settingsScope', 'slots', 'locale'];
 
     function apply(ctx) {
+      // 词典注册 + 绑定（dsh 切语言时槽位经 label/locale: NS 自动重渲染）。
+      ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'dsh-desktop-shell: locale dictionaries');
+      var t = ctx.locale.bind(NS);
+
       ctx.effect(() => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register(
-        { name: 'sidebar.footer.action', id: NS + ':footer', order: 90, label: () => '更新设置', inject: () => ({}) },
+        { name: 'sidebar.footer.action', id: NS + ':footer', order: 90, label: () => t('nav'), locale: NS, inject: () => ({ t: t }) },
         (props) => React.createElement(FooterButton, props),
       )), 'dsh-desktop-shell: sidebar footer action');
 
       // 设置页左侧栏「更新设置」section（memory-eternal 的 settings.section 同款机制）。
       ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register(
-        { name: 'settings.section', id: NS, order: 90, label: () => '更新设置', inject: () => ({}) },
-        () => React.createElement(SettingsSection, null),
+        { name: 'settings.section', id: NS, order: 90, label: () => t('nav'), locale: NS, inject: () => ({ t: t }) },
+        (props) => React.createElement(SettingsSection, props),
       )), 'dsh-desktop-shell: settings section');
     }
 

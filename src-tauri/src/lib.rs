@@ -15,7 +15,7 @@ use std::collections::VecDeque;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -25,6 +25,109 @@ use tauri::{Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_updater::UpdaterExt;
+
+// ===== i18n：跟随 dsh 系统语言 =====
+// 真源：~/.dsh/settings.yaml → locale.preference（en/zh，与 dsh Web UI 语言设置同源，
+// 同 @eternalnight/dsh-theme 的中英跟随模式）。
+// - Rust 侧用户可见文案（托盘/窗口标题/错误态/命令消息）：启动读一次缓存，重启生效；
+// - 设置窗口/加载页：经 get_ui_locale 每次打开时实时读取，dsh 里切语言即时跟随。
+// 缺文件/缺字段/解析失败 → zh（本项目中文为主）。
+
+/// dsh 系统配置文件路径（~/.dsh/settings.yaml）。
+fn dsh_settings_yaml_path() -> Option<PathBuf> {
+    let home = std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .or_else(|_| std::env::var("HOME").map(PathBuf::from))
+        .ok()?;
+    Some(home.join(".dsh").join("settings.yaml"))
+}
+
+/// 从 settings.yaml 文本定向提取 `locale.preference`（en → Some(true)）。
+/// 不引 YAML 依赖：dsh 写出的是顶层 `locale:` 块 + 缩进 `preference:` 键，
+/// 逐行扫描足够；块结束于下一个顶层键。找不到/无法识别 → None（调用方兜底 zh）。
+fn parse_locale_preference(text: &str) -> Option<bool> {
+    let mut in_locale = false;
+    for raw in text.lines() {
+        let top = !raw.starts_with(' ') && !raw.starts_with('\t');
+        let line = raw.trim();
+        if top {
+            in_locale = line == "locale:";
+            continue;
+        }
+        if !in_locale || line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("preference:") {
+            let v = rest
+                .split('#').next().unwrap_or("")
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'');
+            return Some(v.starts_with("en"));
+        }
+    }
+    None
+}
+
+/// 实时读取 dsh 语言（true = en）；读不到按 zh。
+fn read_dsh_locale() -> bool {
+    dsh_settings_yaml_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| parse_locale_preference(&t))
+        .unwrap_or(false)
+}
+
+/// Rust 侧文案用的语言缓存：首次使用（建托盘）时读一次，此后不再变化（重启生效）。
+static UI_LOCALE_EN: OnceLock<bool> = OnceLock::new();
+
+/// Rust 侧双语文案：按缓存语言二选一。
+fn tr<'a>(en: &'a str, zh: &'a str) -> &'a str {
+    let is_en = *UI_LOCALE_EN.get_or_init(read_dsh_locale);
+    if is_en { en } else { zh }
+}
+
+/// 查询 dsh 系统语言（设置窗口/加载页每次打开时调用，切语言即时跟随）。
+#[tauri::command]
+fn get_ui_locale() -> String {
+    if read_dsh_locale() { "en".into() } else { "zh".into() }
+}
+
+#[cfg(test)]
+mod i18n_tests {
+    use super::parse_locale_preference;
+
+    #[test]
+    fn preference_en() {
+        assert_eq!(parse_locale_preference("locale:\n  preference: en\n"), Some(true));
+    }
+
+    #[test]
+    fn preference_zh() {
+        assert_eq!(parse_locale_preference("locale:\n  preference: zh\n"), Some(false));
+    }
+
+    #[test]
+    fn missing_block_yields_none() {
+        assert_eq!(parse_locale_preference("ui-theme:\n  preference: dark\n"), None);
+    }
+
+    #[test]
+    fn block_ends_at_next_top_level_key() {
+        let text = "locale:\n  preference: en\nother:\n  preference: zh\n";
+        assert_eq!(parse_locale_preference(text), Some(true));
+    }
+
+    #[test]
+    fn quoted_value_with_comment() {
+        assert_eq!(parse_locale_preference("locale:\n  preference: 'en' # web ui\n"), Some(true));
+    }
+
+    #[test]
+    fn file_like_real_settings() {
+        let text = "beast-tamer:\n  lang: zh\npermission:\n  defaultPreset: danger-full-access\nlocale:\n  preference: en\n";
+        assert_eq!(parse_locale_preference(text), Some(true));
+    }
+}
 
 // ===== dsh 看门狗状态 =====
 // dsh 上游对插件是 fail-loud 设计：任一 bundle 导入/激活失败整个进程 exit(1)。
@@ -208,6 +311,7 @@ pub fn run() {
             unify_dsh_cli,
             get_boot_state,
             retry_dsh_start,
+            get_ui_locale,
             report_client_error,
             remove_plugin_bundles
         ])
@@ -242,7 +346,7 @@ pub fn run() {
                 // 升级中：所有窗口（含设置窗口）的关闭都拦截，避免半安装状态。
                 if is_updating() {
                     api.prevent_close();
-                    let _ = window.emit("update-blocked", "升级进行中，请等待完成");
+                    let _ = window.emit("update-blocked", tr("An update is in progress. Please wait for it to finish.", "升级进行中，请等待完成"));
                     return;
                 }
                 if window.label() == "main" {
@@ -260,7 +364,7 @@ pub fn run() {
             if let RunEvent::ExitRequested { api, .. } = &event {
                 if is_updating() {
                     api.prevent_exit();
-                    let _ = app_handle.emit("update-blocked", "升级进行中，请等待完成");
+                    let _ = app_handle.emit("update-blocked", tr("An update is in progress. Please wait for it to finish.", "升级进行中，请等待完成"));
                     return;
                 }
             }
@@ -277,10 +381,10 @@ pub fn run() {
 
 /// 创建托盘图标：主窗口加载 dsh UI 后，更新/设置入口常驻系统托盘。
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
-    let show_i = MenuItem::with_id(app, "show", "打开主窗口", true, None::<&str>)?;
-    let settings_i = MenuItem::with_id(app, "open_settings", "设置…", true, None::<&str>)?;
-    let check_i = MenuItem::with_id(app, "check_update", "更新配置", true, None::<&str>)?;
-    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let show_i = MenuItem::with_id(app, "show", tr("Show Main Window", "打开主窗口"), true, None::<&str>)?;
+    let settings_i = MenuItem::with_id(app, "open_settings", tr("Settings…", "设置…"), true, None::<&str>)?;
+    let check_i = MenuItem::with_id(app, "check_update", tr("Check for Updates", "更新配置"), true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", tr("Quit", "退出"), true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_i, &settings_i, &check_i, &quit_i])?;
     let icon = app
         .default_window_icon()
@@ -306,7 +410,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             "quit" => {
                 // 升级中：拦截托盘退出，避免半安装状态。
                 if is_updating() {
-                    let _ = app.emit("update-blocked", "升级进行中，请等待完成");
+                    let _ = app.emit("update-blocked", tr("An update is in progress. Please wait for it to finish.", "升级进行中，请等待完成"));
                     return;
                 }
                 app.exit(0);
@@ -357,7 +461,17 @@ async fn report_client_error(app: tauri::AppHandle, message: String) {
     eprintln!("[dsh-desktop] 客户端模块加载失败: {message}");
     let n = DSH_CRASHES.fetch_add(1, Ordering::Relaxed) + 1;
     if n >= MAX_CRASHES {
-        enter_error_state(&app, format!("dsh 插件模块加载失败（客户端侧，连续 {n} 次）：\n{message}\n\n修复或移除问题插件后点「重试」。"));
+        enter_error_state(
+            &app,
+            format!(
+                "{head}\n{message}\n\n{tail}",
+                head = tr(
+                    &format!("Failed to load dsh plugin module (client side, {n} consecutive failures):"),
+                    &format!("dsh 插件模块加载失败（客户端侧，连续 {n} 次）："),
+                ),
+                tail = tr("Fix or remove the problematic plugin, then click Retry.", "修复或移除问题插件后点「重试」。"),
+            ),
+        );
         return;
     }
     let backoff = CRASH_BACKOFFS[n.min(CRASH_BACKOFFS.len()) - 1];
@@ -438,7 +552,7 @@ fn open_settings_window_on_main(app: &tauri::AppHandle) {
         return;
     }
     match tauri::WebviewWindowBuilder::new(app, "settings", WebviewUrl::App("settings.html".into()))
-        .title("设置")
+        .title(tr("Settings", "设置"))
         .inner_size(460.0, 660.0)
         .resizable(false)
         .center()
@@ -554,7 +668,13 @@ fn spawn_dsh(app: &tauri::AppHandle) {
                 let tail = take_log_tail(LOG_TAIL_LINES);
                 enter_error_state(
                     &handle,
-                    format!("dsh 启动失败（未能拉起服务）。可能原因：全局 dsh 安装损坏、插件解析失败、Node 运行时异常。\n\n最近日志：\n{tail}"),
+                    format!(
+                        "{}{tail}",
+                        tr(
+                            "Failed to start dsh (service did not come up). Possible causes: corrupted global dsh install, plugin resolution failure, or Node runtime error.\n\nRecent logs:\n",
+                            "dsh 启动失败（未能拉起服务）。可能原因：全局 dsh 安装损坏、插件解析失败、Node 运行时异常。\n\n最近日志：\n",
+                        )
+                    ),
                 );
             }
         }
@@ -799,7 +919,14 @@ fn start_dsh(app: &tauri::AppHandle) -> Option<String> {
         kill_dsh_intentionally(app);
         enter_error_state(
             app,
-            format!("dsh 启动超时（>{READY_TIMEOUT:?}，端口 {port}）。可能原因：插件安装损坏、Node 运行时异常。\n\n最近日志：\n{}", take_log_tail(LOG_TAIL_LINES)),
+            format!(
+                "{}{}",
+                tr(
+                    &format!("dsh start timed out (>{READY_TIMEOUT:?}, port {port}). Possible causes: corrupted plugin install or Node runtime error.\n\nRecent logs:\n"),
+                    &format!("dsh 启动超时（>{READY_TIMEOUT:?}，端口 {port}）。可能原因：插件安装损坏、Node 运行时异常。\n\n最近日志：\n"),
+                ),
+                take_log_tail(LOG_TAIL_LINES),
+            ),
         );
         None
     }
@@ -854,7 +981,13 @@ fn handle_dsh_crash(app: &tauri::AppHandle, code: Option<i32>) {
         let tail = take_log_tail(LOG_TAIL_LINES);
         enter_error_state(
             app,
-            format!("dsh 连续崩溃 {n} 次，已停止自动重启（退出码 {code:?}）。多为某个插件加载/激活失败（dsh 对插件零容错）。修复或移除问题插件后点「重试」。\n\n最近日志：\n{tail}"),
+            format!(
+                "{}{tail}",
+                tr(
+                    &format!("dsh crashed {n} times in a row; automatic restart stopped (exit code {code:?}). Usually a plugin fails to load or activate (dsh is zero-tolerance for plugins). Fix or remove the problematic plugin, then click Retry.\n\nRecent logs:\n"),
+                    &format!("dsh 连续崩溃 {n} 次，已停止自动重启（退出码 {code:?}）。多为某个插件加载/激活失败（dsh 对插件零容错）。修复或移除问题插件后点「重试」。\n\n最近日志：\n"),
+                )
+            ),
         );
         return;
     }
@@ -2052,7 +2185,7 @@ fn run_ps(script: &str, prefix: &str) -> (bool, String) {
 /// 确保 %APPDATA%\npm 在用户 PATH（读注册表不展开形式，保留 %VAR% 引用；写回原值类型并广播环境变更）。
 #[cfg(windows)]
 fn ensure_user_path_contains_prefix() -> Result<(), String> {
-    let prefix = global_dsh_dir().ok_or("无法定位全局前缀")?;
+    let prefix = global_dsh_dir().ok_or_else(|| tr("Cannot locate the global npm prefix", "无法定位全局前缀").to_string())?;
     let ps = r#"
 $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
 if ($null -eq $k) { Write-Output 'ERR: 打不开 HKCU\Environment'; exit 1 }
@@ -2072,7 +2205,7 @@ if ($expanded -split ';' -notcontains $env:DSH_PREFIX) {
 } else { Write-Output 'EXISTS' }
 "#;
     let (ok, out) = run_ps(ps, &display_path(&prefix));
-    if ok { Ok(()) } else { Err(format!("写入用户 PATH 失败: {out}")) }
+    if ok { Ok(()) } else { Err(format!("{}{out}", tr("Failed to write the user PATH: ", "写入用户 PATH 失败: "))) }
 }
 
 /// 无提权直接移除外来 npm 前缀里的 dsh（目录可写时）。先探测可写性，避免删一半。
@@ -2117,7 +2250,10 @@ try {
     if ok {
         Ok(())
     } else {
-        Err(format!("提权卸载失败（用户取消或 npm 出错）: {out}"))
+        Err(format!(
+            "{}{out}",
+            tr("Elevated uninstall failed (user cancelled or npm error): ", "提权卸载失败（用户取消或 npm 出错）: ")
+        ))
     }
 }
 
@@ -2126,16 +2262,16 @@ try {
 fn unify_terminal_dsh() -> Result<String, String> {
     let st = scan_terminal_dsh();
     if st.unified {
-        return Ok("终端 dsh 已与桌面壳同源".into());
+        return Ok(tr("Terminal dsh is already in sync with the desktop shell", "终端 dsh 已与桌面壳同源").into());
     }
     match st.kind.as_str() {
         "missing" => {
             ensure_user_path_contains_prefix()?;
             let after = scan_terminal_dsh();
             if after.unified {
-                Ok("已把全局前缀加入用户 PATH，新开终端即生效".into())
+                Ok(tr("Added the global prefix to the user PATH; takes effect in new terminals", "已把全局前缀加入用户 PATH，新开终端即生效").into())
             } else {
-                Err("已写入 PATH 但仍解析异常，请检查环境变量".into())
+                Err(tr("PATH was written but dsh still does not resolve; check your environment variables", "已写入 PATH 但仍解析异常，请检查环境变量").into())
             }
         }
         "npm-global" => {
@@ -2143,7 +2279,7 @@ fn unify_terminal_dsh() -> Result<String, String> {
                 st.terminal_path.as_deref().unwrap_or_default(),
             )
             .parent()
-            .ok_or("无法定位抢占来源目录")?
+            .ok_or_else(|| tr("Cannot locate the hijacking source directory", "无法定位抢占来源目录").to_string())?
             .to_path_buf();
             eprintln!(
                 "[dsh-desktop] 检测到终端 dsh 被另一 npm 全局前缀抢占: {}",
@@ -2160,16 +2296,22 @@ fn unify_terminal_dsh() -> Result<String, String> {
             let final_st = scan_terminal_dsh();
             if final_st.unified {
                 Ok(format!(
-                    "已移除抢占副本（{}），终端 dsh 现与桌面壳同源",
-                    display_path(&winner)
+                    "{}",
+                    tr(
+                        &format!("Removed the hijacking copy ({}); terminal dsh is now in sync with the desktop shell", display_path(&winner)),
+                        &format!("已移除抢占副本（{}），终端 dsh 现与桌面壳同源", display_path(&winner)),
+                    )
                 ))
             } else {
-                Err("卸载完成但终端解析仍异常，请重启终端后重试".into())
+                Err(tr("Uninstalled, but terminal dsh still does not resolve; restart your terminal and try again", "卸载完成但终端解析仍异常，请重启终端后重试").into())
             }
         }
         _ => Err(format!(
-            "检测到非 npm 来源的 dsh 抢占 PATH（{}），请在设置中手动处理",
-            st.foreign_paths.join(", ")
+            "{}",
+            tr(
+                &format!("Detected a non-npm dsh taking over PATH ({}); handle it manually in Settings", st.foreign_paths.join(", ")),
+                &format!("检测到非 npm 来源的 dsh 抢占 PATH（{}），请在设置中手动处理", st.foreign_paths.join(", ")),
+            )
         )),
     }
 }

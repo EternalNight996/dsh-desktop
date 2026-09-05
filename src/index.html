@@ -124,6 +124,25 @@
     </div>
     <script>
       (function () {
+        // i18n：跟随 dsh 系统语言（~/.dsh/settings.yaml → locale.preference，经 get_ui_locale 读取）。
+        var I18N = {
+          zh: {
+            starting: '正在启动本地服务，请稍候…',
+            bootFail: '本地服务启动失败',
+            repair: '🔧 自动修复',
+            retry: '重试',
+            repairing: '正在移除问题插件并重启…',
+          },
+          en: {
+            starting: 'Starting the local service, please wait…',
+            bootFail: 'Failed to start the local service',
+            repair: '🔧 Auto Repair',
+            retry: 'Retry',
+            repairing: 'Removing the problematic plugin and restarting…',
+          },
+        };
+        var LANG = 'zh';
+        function t(k) { return (I18N[LANG] && I18N[LANG][k]) || I18N.zh[k] || k; }
         // 轮询后端启动状态：成功时窗口被导航去 dsh UI（本页卸载，轮询自然终止）；
         // 错误态时显示原因与重试按钮。原因用 textContent 渲染，无注入面。
         var sub = document.getElementById('sub');
@@ -154,11 +173,17 @@
           catch (e) { return Promise.reject(e); }
         };
         var shown = false;
+        function applyTexts() {
+          document.documentElement.lang = LANG === 'en' ? 'en' : 'zh-CN';
+          sub.textContent = t('starting');
+          retry.textContent = t('retry');
+          repair.textContent = t('repair');
+        }
         function poll() {
           invoke('get_boot_state').then(function (st) {
             if (st && st.status === 'error' && st.error && !shown) {
               shown = true;
-              sub.textContent = '本地服务启动失败';
+              sub.textContent = t('bootFail');
               bar.hidden = true;
               errbox.textContent = st.error;
               errbox.hidden = false;
@@ -175,23 +200,26 @@
           shown = false; foundPlugins = null;
           retry.hidden = true; repair.hidden = true;
           errbox.hidden = true; bar.hidden = false;
-          sub.textContent = '正在启动本地服务，请稍候…';
+          sub.textContent = t('starting');
           invoke('retry_dsh_start').catch(function () {});
           poll();
         });
         repair.addEventListener('click', function () {
           if (!foundPlugins) return;
           repair.disabled = true;
-          sub.textContent = '正在移除问题插件并重启…';
+          sub.textContent = t('repairing');
           invoke('remove_plugin_bundles', { plugins: foundPlugins }).catch(function () {}).finally(function () {
             shown = false; foundPlugins = null;
             repair.hidden = true; retry.hidden = true;
             errbox.hidden = true; bar.hidden = false;
-            sub.textContent = '正在启动本地服务，请稍候…';
+            sub.textContent = t('starting');
             poll();
           });
         });
-        poll();
+        // 先定语言（读 dsh 系统配置）再开始轮询与首次渲染；读不到按 zh。
+        invoke('get_ui_locale').then(function (l) { LANG = l === 'en' ? 'en' : 'zh'; })
+          .catch(function () {})
+          .finally(function () { applyTexts(); poll(); });
       })();
     </script>
   </body>
